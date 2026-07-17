@@ -1,0 +1,13 @@
+.env
+backend/.env
+backend/venv/
+.test-venv/
+frontend/node_modules/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+data/logs/*.log
+data/logs/*.backup
+backend/data/test_users.json
+backend/data/user_id_mapping.json
+data/flickr30k_dataset/compressed/
