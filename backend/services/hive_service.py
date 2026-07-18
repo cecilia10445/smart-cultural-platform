@@ -107,7 +107,7 @@ class HiveService:
         """获取用户历史记录（使用通用加反引号函数）"""
         try:
             if not self.connect():
-                print(f"⚠️ Hive连接失败，使用模拟数据 for {user_id}")
+                print(f"⚠️ Hive连接失败，用户历史暂不可用: {user_id}")
                 return None
         
             # 1. 定义需要查询的字段列表
@@ -139,42 +139,9 @@ class HiveService:
                 print(f"ℹ️ 用户 {user_id} 无历史记录")
                 return []
             
-        except Exception as e:
-            print(f"❌ 查询历史记录失败，使用模拟数据: {e}")
+        except Exception:
+            print("❌ Hive用户历史查询失败")
             return None
-    
-    def get_mock_history(self, user_id):
-        """生成模拟历史记录数据"""
-        import random
-        from datetime import datetime, timedelta
-        
-        if user_id in ["U1001", "user123"]:
-            # 真实用户返回空数组（没有历史记录）
-            return []
-        elif user_id.startswith('U') and user_id[1:].isdigit() and int(user_id[1:]) <= 1000:
-            # 模拟用户返回Flickr30K模拟数据
-            mock_history = []
-            styles = ["realistic", "cinematic", "vibrant", "artistic"]
-            
-            for i in range(5):
-                days_ago = random.randint(1, 30)
-                timestamp = (datetime.now() - timedelta(days=days_ago)).isoformat()
-                
-                mock_history.append({
-                    'timestamp': timestamp,
-                    'prompt': f'Beautiful landscape with mountains and lakes {i}',
-                    'style': random.choice(styles),
-                    'image_url': f'/api/flickr/image/{user_id}/sample_{i}.jpg',
-                    'title': f'Scenic View {i}',
-                    'content': 'This is an AI-generated description of a beautiful landscape.',
-                    'generation_time': round(random.uniform(2.0, 8.0), 2),
-                    'content_length': 150,
-                    'captions': ['A stunning view of nature', 'Peaceful landscape scene']
-                })
-            
-            return mock_history
-        else:
-            return []
     
     def get_dashboard_stats(self):
         """获取运营面板统计数据（增强版，使用通用加反引号函数）"""

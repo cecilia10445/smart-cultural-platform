@@ -132,25 +132,6 @@ try:
     print("✅ 成功导入AIGC服务")
 except ImportError as e:
     raise RuntimeError("AIGC service could not be imported") from e
-    print(f"⚠️ AIGC服务导入失败: {e}")
-    
-    # 降级方案
-    class MockAIGCService:
-        def generate_content(self, prompt, style):
-            print(f"🎨 模拟生成: {prompt} - {style}")
-            time.sleep(2)
-            
-            title = f"{prompt}的{style}之旅"[:10]
-            content = f"在{style}的风格下，{prompt}展现出独特的魅力。这是一段精心创作的描述，希望能够激发您的想象力。"
-            content = content[:100] + "..." if len(content) > 100 else content
-            
-            image_url = f"https://picsum.photos/512/512?random={int(time.time())}"
-            return image_url, title, content
-    
-    aigc_service = MockAIGCService()
-    
-    def generate_content(prompt, style):
-        return aigc_service.generate_content(prompt, style)
 
 try:
     from backend.services.mysql_service import mysql_service
@@ -827,117 +808,8 @@ def get_user_profile_dashboard():
                 })
 
         return api_error("DATA_UNAVAILABLE", "Data services are temporarily unavailable.", 503, True, True)
-         
-        # 若MySQL和Hive服务均不可用，返回降级数据
-        print("⚠️ MySQL和Hive服务均不可用，使用模拟用户画像数据")
-        return jsonify({
-            'status': 'success',
-            'data': get_fallback_user_profile_data(),
-            'dataSource': '模拟数据'
-        })
-        
-    except Exception as e:
-        print(f"❌ 获取用户画像数据失败: {e}")
-        return jsonify({
-            'status': 'success',
-            'data': get_fallback_user_profile_data(),
-            'message': '使用模拟数据：' + str(e),
-            'dataSource': '模拟数据'
-        }), 500  
-
-def get_fallback_user_profile_data():
-    """降级用户画像数据"""
-    return {
-        'stats': {
-            'totalUsers': 3449,
-            'totalGenerations': 12567,
-            'activeUsers': 2890,
-            'avgRating': 4.2
-        },
-        'age_distribution': [
-            {'age_range': '1', 'count': 120, 'percentage': 3.5},
-            {'age_range': '2', 'count': 850, 'percentage': 24.6},
-            {'age_range': '3', 'count': 980, 'percentage': 28.4},
-            {'age_range': '4', 'count': 720, 'percentage': 20.9},
-            {'age_range': '5', 'count': 450, 'percentage': 13.0},
-            {'age_range': '6', 'count': 200, 'percentage': 5.8},
-            {'age_range': '7', 'count': 89, 'percentage': 2.6},
-            {'age_range': '0', 'count': 40, 'percentage': 1.2}
-        ],
-        'gender_distribution': [
-            {'gender': 'female', 'count': 1850, 'percentage': 53.6},
-            {'gender': 'male', 'count': 1420, 'percentage': 41.2},
-            {'gender': 'unknown', 'count': 179, 'percentage': 5.2}
-        ],
-        'active_period_distribution': [
-            {'period': '深夜党', 'count': 450, 'percentage': 13.0},
-            {'period': '上午党', 'count': 980, 'percentage': 28.4},
-            {'period': '下午党', 'count': 1250, 'percentage': 36.2},
-            {'period': '晚间党', 'count': 769, 'percentage': 22.3}
-        ],
-        'user_behavior_7days': {
-            'labels': ['10-01', '10-02', '10-03', '10-04', '10-05', '10-06', '10-07'],
-            'generation_data': [1560, 1420, 1680, 1750, 1890, 1620, 1780],
-            'download_data': [890, 820, 950, 1020, 1100, 920, 980]
-        },
-        'style_popularity': [
-            {'style': '赛博朋克', 'usage_count': 2560},
-            {'style': '水彩画风', 'usage_count': 2340},
-            {'style': '极简主义', 'usage_count': 1980},
-            {'style': '复古风格', 'usage_count': 1760},
-            {'style': '未来科技', 'usage_count': 1650},
-            {'style': '自然风光', 'usage_count': 1520},
-            {'style': '抽象艺术', 'usage_count': 1380},
-            {'style': '卡通动漫', 'usage_count': 1250},
-            {'style': '写实风格', 'usage_count': 1120},
-            {'style': '梦幻唯美', 'usage_count': 980}
-        ],
-        'rating_distribution': [
-            {'rating': 1, 'count': 120},
-            {'rating': 2, 'count': 280},
-            {'rating': 3, 'count': 1560},
-            {'rating': 4, 'count': 3240},
-            {'rating': 5, 'count': 2367}
-        ],
-        'style_trend_30days': {
-            'labels': ['09-08', '09-09', '09-10', '09-11', '09-12', '09-13', '09-14', '09-15', '09-16', '09-17', 
-                      '09-18', '09-19', '09-20', '09-21', '09-22', '09-23', '09-24', '09-25', '09-26', '09-27',
-                      '09-28', '09-29', '09-30', '10-01', '10-02', '10-03', '10-04', '10-05', '10-06', '10-07'],
-            'datasets': [
-                {
-                    'label': '赛博朋克',
-                    'data': [65, 70, 68, 72, 75, 78, 80, 82, 85, 88, 90, 92, 95, 98, 100, 105, 108, 110, 112, 115, 118, 120, 122, 125, 128, 130, 132, 135, 138, 140]
-                },
-                {
-                    'label': '水彩画风',
-                    'data': [55, 58, 60, 62, 65, 68, 70, 72, 75, 78, 80, 82, 85, 88, 90, 92, 95, 98, 100, 102, 105, 108, 110, 112, 115, 118, 120, 122, 125, 128]
-                },
-                {
-                    'label': '极简主义',
-                    'data': [45, 48, 50, 52, 55, 58, 60, 62, 65, 68, 70, 72, 75, 78, 80, 82, 85, 88, 90, 92, 95, 98, 100, 102, 105, 108, 110, 112, 115, 118]
-                }
-            ]
-        },
-        'generation_efficiency': [
-            {'time_range': '0-5秒', 'count': 1560},
-            {'time_range': '5-10秒', 'count': 2340},
-            {'time_range': '10-30秒', 'count': 1890},
-            {'time_range': '30-60秒', 'count': 980},
-            {'time_range': '60秒以上', 'count': 450}
-        ],
-        'hot_keywords': [
-            {'keyword': '夏日', 'frequency': 256, 'trend': [45, 48, 52, 55, 58, 62, 65]},
-            {'keyword': '星空', 'frequency': 234, 'trend': [42, 45, 48, 50, 52, 55, 58]},
-            {'keyword': '未来', 'frequency': 198, 'trend': [38, 40, 42, 45, 48, 50, 52]},
-            {'keyword': '城市', 'frequency': 176, 'trend': [35, 38, 40, 42, 45, 48, 50]},
-            {'keyword': '自然', 'frequency': 165, 'trend': [32, 35, 38, 40, 42, 45, 48]},
-            {'keyword': '科技', 'frequency': 152, 'trend': [30, 32, 35, 38, 40, 42, 45]},
-            {'keyword': '艺术', 'frequency': 138, 'trend': [28, 30, 32, 35, 38, 40, 42]},
-            {'keyword': '梦想', 'frequency': 125, 'trend': [25, 28, 30, 32, 35, 38, 40]},
-            {'keyword': '海洋', 'frequency': 112, 'trend': [22, 25, 28, 30, 32, 35, 38]},
-            {'keyword': '森林', 'frequency': 98, 'trend': [20, 22, 25, 28, 30, 32, 35]}
-        ]
-    }
+    except Exception:
+        return api_error("DATA_UNAVAILABLE", "Data services are temporarily unavailable.", 503, True, True)
 
 
 
@@ -995,44 +867,44 @@ def get_personalized_recommendations():
                 })
 
         return api_error("DATA_UNAVAILABLE", "Data services are temporarily unavailable.", 503, True, True)
-         
-        # 两个服务都不可用时使用模拟数据
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'style_recommendations': [
-                    {'style': '赛博朋克', 'score': 0.95, 'reason': '同类型用户偏好'},
-                    {'style': '水彩画风', 'score': 0.88, 'reason': '同类型用户偏好'}
-                ],
-                'hot_keywords': [
-                    {'keyword': '夏日', 'frequency': 256, 'hot_score': 92, 'type': '全网热门'},
-                    {'keyword': '星空', 'frequency': 234, 'hot_score': 87, 'type': '全网热门'}
-                ]
-            },
-            'dataSource': '模拟数据'
-        })
-        
-    except Exception as e:
-        print(f"❌ 获取热门推荐失败: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': f'获取热门推荐失败: {str(e)}'
-        }), 500
+    except Exception:
+        return api_error("DATA_UNAVAILABLE", "Data services are temporarily unavailable.", 503, True, True)
 
 # ==============================================
 # 新增接口结束
 # ==============================================
 
 
-# 健康检查接口
+# 存活检查仅表示 Flask 进程可以响应，不访问任何下游依赖。
 @app.route('/api/health')
+@app.route('/api/health/live')
 def health_check():
-    """健康检查端点"""
+    """Liveness endpoint and compatibility alias."""
+    return jsonify({'status': 'alive'})
+
+
+@app.route('/api/health/ready')
+def readiness_check():
+    """Check dependencies required by the synchronous generation API."""
+    mysql_ready = False
+    if mysql_service is not None:
+        try:
+            mysql_ready = bool(mysql_service.connect())
+        except Exception:
+            mysql_ready = False
+
+    # Hive is an optional analytics dependency and does not gate content generation.
+    model_configured = bool(load_settings().dashscope_api_key)
+    checks = {
+        'mysql': 'ready' if mysql_ready else 'unavailable',
+        'generation_model': 'configured' if model_configured else 'unavailable',
+        'hive': 'optional',
+    }
+    ready = mysql_ready and model_configured
     return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'service': '智能文创平台后端'
-    })
+        'status': 'ready' if ready else 'unavailable',
+        'checks': checks,
+    }), 200 if ready else 503
 
 if __name__ == '__main__':
     print("🚀 启动智能文创平台后端服务...")
