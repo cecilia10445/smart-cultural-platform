@@ -1,8 +1,12 @@
 .env
 backend/.env
+.venv/
+backend/.venv/
 backend/venv/
 .test-venv/
 frontend/node_modules/
+frontend/dist/
+desktop.ini
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
