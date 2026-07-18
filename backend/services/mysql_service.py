@@ -39,6 +39,7 @@ class MySQLService:
 
     def connect(self):
         """连接MySQL数据库 - 现在只用于检查连接是否可用"""
+        test_connection = None
         try:
             if pymysql is None:
                 logger.error("PyMySQL is not installed")
@@ -62,13 +63,64 @@ class MySQLService:
             with test_connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
             
-            test_connection.close()
             logger.info("✅ MySQL连接测试成功")
             return True
             
         except Exception as e:
             logger.error(f"❌ MySQL连接测试失败: {e}")
             return False
+        finally:
+            if test_connection:
+                test_connection.close()
+
+    def execute_insert(self, query, params=None, max_retries=2):
+        """Execute one INSERT and return its generated primary key."""
+        if pymysql is None:
+            logger.error("MySQL insert failed: PyMySQL is not installed")
+            return None
+
+        transient_error_codes = {2006, 2013, 2055}
+        for attempt in range(max_retries + 1):
+            connection = None
+            try:
+                settings = load_settings()
+                connection = pymysql.connect(
+                    host=self.host,
+                    port=self.port,
+                    user=self.username,
+                    password=self.password,
+                    database=self.database,
+                    charset='utf8mb4',
+                    cursorclass=pymysql.cursors.DictCursor,
+                    autocommit=True,
+                    connect_timeout=self.connect_timeout,
+                    read_timeout=settings.mysql_read_timeout_seconds,
+                    write_timeout=settings.mysql_write_timeout_seconds,
+                )
+                with connection.cursor() as cursor:
+                    cursor.execute(query, params)
+                    return cursor.lastrowid
+            except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as error:
+                error_code = error.args[0] if error.args else 0
+                if error_code not in transient_error_codes or attempt >= max_retries:
+                    logger.error("MySQL insert failed (code=%s)", error_code)
+                    return None
+                logger.warning(
+                    "Transient MySQL insert failure; retrying (code=%s, attempt=%s/%s)",
+                    error_code,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                time.sleep(1)
+            except Exception as error:
+                error_code = error.args[0] if error.args and isinstance(error.args[0], int) else "unknown"
+                logger.error("MySQL insert failed (code=%s)", error_code)
+                return None
+            finally:
+                if connection:
+                    connection.close()
+
+        return None
 
     def execute_query(self, query, params=None, max_retries=2):
         """执行MySQL查询，每次创建新连接避免竞争"""
@@ -100,19 +152,10 @@ class MySQLService:
                     else:
                         result = cursor.rowcount
                     
-                    # 立即关闭连接
-                    connection.close()
                     return result
                     
             except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
                 error_code = e.args[0] if e.args else 0
-                
-                # 关闭连接
-                if connection:
-                    try:
-                        connection.close()
-                    except:
-                        pass
                 
                 # 如果是连接相关的错误
                 if error_code in (2006, 2013, 2055):  # MySQL连接错误代码
@@ -128,20 +171,14 @@ class MySQLService:
                     return None
                     
             except Exception as e:
-                # 关闭连接
-                if connection:
-                    try:
-                        connection.close()
-                    except:
-                        pass
-                
-                logger.error(f"❌ MySQL查询执行失败: {e}")
-                logger.error(f"查询语句: {query}")
-                logger.error(f"参数: {params}")
+                logger.error("❌ MySQL查询执行失败 (type=%s)", type(e).__name__)
                 if attempt < max_retries:
                     time.sleep(1)
                     continue
                 return None
+            finally:
+                if connection:
+                    connection.close()
                 
         return None
 

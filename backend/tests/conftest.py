@@ -5,6 +5,13 @@ import sys
 import pytest
 
 
+class AvailableMySQLStub:
+    """Default unit-test database boundary; individual tests replace as needed."""
+
+    def connect(self):
+        return True
+
+
 @pytest.fixture()
 def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("JWT_SECRET", "unit-test-secret")
@@ -19,6 +26,7 @@ def app_module(monkeypatch, tmp_path):
         "admins": [{"user_id": "A1", "username": "admin", "password_hash": app.generate_password_hash("admin-password"), "role": "admin", "name": "Admin"}],
     }
     (data_dir / "test_users.json").write_text(json.dumps(app.users_data), encoding="utf-8")
+    app.mysql_service = AvailableMySQLStub()
     app.app.config.update(TESTING=True)
     return app
 

@@ -361,10 +361,15 @@ def generate_content_api():
         prompt = data.get('prompt', '')
         style = data.get('style', 'general')
         
-        print(f"🎯 用户 {user_info['username']} 生成请求: {prompt} - {style}")
-        
         if not prompt:
             return jsonify({'status': 'error', 'message': '主题描述不能为空'}), 400
+
+        print(f"🎯 用户 {user_info['username']} 提交生成请求，风格: {style}")
+
+        # 在调用可计费模型前检查业务数据库是否可用。
+        if mysql_service is None or not mysql_service.connect():
+            log_event('error', {'code': 'MYSQL_UNAVAILABLE', 'user_id': user_info.get('user_id')})
+            return api_error("MYSQL_UNAVAILABLE", "Data service is temporarily unavailable.", 503, True, True)
         
         # 调用AIGC服务生成图文
         try:
@@ -410,7 +415,7 @@ def generate_content_api():
         all_users = users_data['users'] + users_data['admins']
         user_data = next((u for u in all_users if u['user_id'] == user_id), None)
 
-        # 记录日志 - 使用 local_image_url
+        # 准备本地日志；只有 MySQL 真实落库后才记录生成成功。
         log_data = {
             'event_type': 'generate',
             'user_id': user_info['user_id'],
@@ -429,62 +434,60 @@ def generate_content_api():
             'user_rating': None,
             'download_count': 0
         }
-        log_event('generate', log_data)
-
-        # 只在生成时插入MySQL记录，其他事件只更新
-        if mysql_service is None or not mysql_service.connect():
-            log_event('error', {'code': 'MYSQL_UNAVAILABLE', 'user_id': user_info.get('user_id')})
-            return api_error("MYSQL_UNAVAILABLE", "Data service is temporarily unavailable.", 503, True, True)
-
-        mysql_record_id = None
-        if mysql_service and mysql_service.connect():
+        age_value = None
+        age_range = user_data.get('age_range') if user_data else None
+        if isinstance(age_range, str):
             try:
-                # 检查是否已存在相同记录
-                check_query = """
-                SELECT id FROM generation_logs 
-                WHERE user_id = %s AND prompt = %s AND style = %s 
-                AND timestamp >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-                ORDER BY timestamp DESC LIMIT 1
-                """
-                existing_record = mysql_service.execute_query(check_query, (user_id, prompt, style))
-                
-                if not existing_record:
-                    # 插入新记录 - 使用 local_image_url
-                    insert_query = """
-                    INSERT INTO generation_logs 
-                    (user_id, event_type, timestamp, prompt, style, image_url, title, content, 
-                     generation_time, content_length, user_rating, download_count, user_age, user_gender, login_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """
-                    
-                    insert_params = (
-                        user_id,
-                        'generate',
-                        datetime.now().isoformat(),
-                        prompt,
-                        style,
-                        local_image_url,  # 使用本地路径
-                        title,
-                        content,
-                        generation_time,
-                        len(content),
-                        None,
-                        0,
-                        int(user_data.get('age_range', '25-30').split('-')[0]) if user_data and user_data.get('age_range') else 25,
-                        1 if user_data and user_data.get('gender') == 'male' else 0 if user_data and user_data.get('gender') == 'female' else 2,
-                        user_data.get('last_login') if user_data else None
-                    )
-                    
-                    result = mysql_service.execute_query(insert_query, insert_params)
-                    if result is not None:
-                        print(f"✅ 成功保存生成记录到MySQL: {user_id}")
-                    else:
-                        print(f"⚠️ 保存到MySQL失败，但继续流程")
-                else:
-                    print(f"ℹ️ 已存在相似记录，跳过重复插入: {user_id}")
-                    
-            except Exception as e:
-                print(f"⚠️ 保存到MySQL失败: {e}")
+                age_value = int(age_range.split('-', 1)[0])
+            except (TypeError, ValueError):
+                age_value = None
+
+        gender = user_data.get('gender') if user_data else None
+        gender_value = 1 if gender == 'male' else 0 if gender == 'female' else None
+
+        insert_query = """
+        INSERT INTO generation_logs
+        (user_id, event_type, timestamp, prompt, style, image_url, title, content,
+         generation_time, content_length, user_rating, download_count, user_age, user_gender,
+         login_time, data_origin)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        insert_params = (
+            user_id,
+            'generate',
+            datetime.now().isoformat(),
+            prompt,
+            style,
+            local_image_url,
+            title,
+            content,
+            generation_time,
+            len(content),
+            None,
+            0,
+            age_value,
+            gender_value,
+            user_data.get('last_login') if user_data else None,
+            'production',
+        )
+
+        try:
+            mysql_record_id = mysql_service.execute_insert(insert_query, insert_params)
+        except Exception:
+            mysql_record_id = None
+
+        if mysql_record_id is None:
+            log_event('error', {'code': 'GENERATION_PERSIST_FAILED', 'user_id': user_id})
+            return api_error(
+                "GENERATION_PERSIST_FAILED",
+                "Generated content could not be persisted.",
+                503,
+                True,
+                True,
+            )
+
+        log_event('generate', log_data)
+        print(f"✅ 成功保存生成记录到MySQL: {user_id}")
         
         # 返回给前端的也使用本地路径
         return jsonify({
@@ -492,7 +495,7 @@ def generate_content_api():
             'title': title,
             'content': content,
             'generation_time': generation_time,
-            'log_id': f"log_{int(time.time())}_{user_id}",
+            'log_id': mysql_record_id,
             'status': 'success'
         })
     
