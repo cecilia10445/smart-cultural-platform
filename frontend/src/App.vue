@@ -191,33 +191,55 @@
         
         <!-- 热门推荐 -->
         <div v-if="activeTab === 'recommendations'">
-          <div class="row mb-4">
+          <div v-if="recommendationLoading" class="loading">
+            <div class="loading-spinner"></div>
+            <p class="mt-3">正在加载推荐数据...</p>
+          </div>
+
+          <div v-else-if="recommendationError" class="error">
+            <p>❌ {{ recommendationError }}</p>
+            <button class="btn btn-outline-primary btn-sm" @click="loadRecommendations">
+              重新加载
+            </button>
+          </div>
+
+          <div v-else-if="recommendationsLoaded && trendingStyles.length === 0 && trendingKeywords.length === 0" class="empty-history">
+            <div class="icon">📭</div>
+            <h5 class="mb-3">暂无推荐数据</h5>
+            <button class="btn btn-outline-primary btn-sm" @click="loadRecommendations">
+              重新加载
+            </button>
+          </div>
+
+          <template v-else-if="recommendationsLoaded">
+          <div class="row mb-4" v-if="trendingStyles.length > 0">
             <div class="col-12">
               <h4>🎨 热门风格推荐</h4>
               <div class="recommendation-grid">
                 <div class="recommendation-card" v-for="style in trendingStyles" :key="style.style">
                   <div class="recommendation-icon">🎭</div>
                   <div class="recommendation-title">{{ style.style }}</div>
-                  <div class="recommendation-desc">热度评分: {{ style.popularity_score }}</div>
-                  <div class="hot-score">{{ style.avg_satisfaction }}分</div>
+                  <div class="hot-score">推荐评分: {{ style.score }}</div>
+                  <div v-if="style.reason" class="recommendation-desc">{{ style.reason }}</div>
                 </div>
               </div>
             </div>
           </div>
           
-          <div class="row">
+          <div class="row" v-if="trendingKeywords.length > 0">
             <div class="col-12">
               <h4>🔥 热门关键词</h4>
               <div class="recommendation-grid">
                 <div class="recommendation-card" v-for="keyword in trendingKeywords" :key="keyword.keyword">
                   <div class="recommendation-icon">🔑</div>
                   <div class="recommendation-title">{{ keyword.keyword }}</div>
-                  <div class="recommendation-desc">风格: {{ keyword.style }}</div>
-                  <div class="hot-score">{{ keyword.hot_score }}热度</div>
+                  <div class="recommendation-desc">出现频次: {{ keyword.frequency }}</div>
+                  <div class="hot-score">热度: {{ keyword.hot_score }}</div>
                 </div>
               </div>
             </div>
           </div>
+          </template>
         </div>
         
         <!-- 历史记录 -->
@@ -268,14 +290,8 @@
           <div v-else-if="historyLoaded && history.length === 0" class="empty-history">
             <div class="icon">📝</div>
             <h5 class="mb-3">暂无生成记录</h5>
-            <p class="text-muted mb-4" v-if="userInfo?.user_type === 'real_user'">
+            <p class="text-muted mb-4">
               开始您的第一次创作，生成精彩内容吧！
-            </p>
-            <p class="text-muted mb-4" v-else-if="userInfo?.user_type === 'simulation_user'">
-              这是基于Flickr30K数据集的模拟历史记录展示
-            </p>
-            <p class="text-muted mb-4" v-else>
-              新用户，等待您的第一次创作
             </p>
             <button class="btn btn-primary" @click="switchTab('generate')">
               🎨 开始创作
@@ -394,6 +410,9 @@ export default {
       // 推荐相关
       trendingStyles: [],
       trendingKeywords: [],
+      recommendationLoading: false,
+      recommendationError: '',
+      recommendationsLoaded: false,
       
       // 密码修改
       currentPassword: '',
@@ -564,99 +583,69 @@ export default {
     },
     
     async loadRecommendations() {
+      if (this.recommendationLoading) return;
+      this.recommendationLoading = true;
+      this.recommendationError = '';
+      this.recommendationsLoaded = false;
+      this.trendingStyles = [];
+      this.trendingKeywords = [];
+
       try {
         const token = localStorage.getItem('token');
+        if (!token) {
+          this.recommendationError = '登录状态已失效，请重新登录';
+          return;
+        }
+
         const response = await axios.get('/api/recommendations/personalized', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
         
-        console.log('推荐API响应:', response.data);
-        
-        if (response.data.status === 'success') {
-          // 使用后端实际返回的字段名
-          this.trendingStyles = response.data.data.style_recommendations || [];
-          this.trendingKeywords = response.data.data.hot_keywords || [];
-          
-          console.log('热门风格:', this.trendingStyles);
-          console.log('热门关键词:', this.trendingKeywords);
-          
-          // 检查数据结构，如果需要转换
-          if (this.trendingStyles.length > 0) {
-            console.log('风格数据结构:', this.trendingStyles[0]);
-          }
-          if (this.trendingKeywords.length > 0) {
-            console.log('关键词数据结构:', this.trendingKeywords[0]);
-          }
-          
-          // 如果后端数据字段名与前端期望的不同，进行数据转换
-          this.transformRecommendationData();
-          
-          // 如果没有数据，使用模拟数据
-          if (this.trendingStyles.length === 0 && this.trendingKeywords.length === 0) {
-            console.log('API返回空数据，使用模拟数据');
-            this.useMockRecommendationData();
-          }
-        } else {
-          console.error('API返回状态失败:', response.data);
-          this.useMockRecommendationData();
+        const data = response.data?.data;
+        if (response.data?.status !== 'success' || !data ||
+            !Array.isArray(data.style_recommendations) || !Array.isArray(data.hot_keywords)) {
+          this.recommendationError = '推荐服务返回的数据格式异常，请稍后重试';
+          return;
         }
+
+        const stylesValid = data.style_recommendations.every(style =>
+          style &&
+          typeof style.style === 'string' && style.style.trim().length > 0 &&
+          typeof style.score === 'number' && Number.isFinite(style.score) &&
+          (style.reason == null || typeof style.reason === 'string')
+        );
+        const keywordsValid = data.hot_keywords.every(keyword =>
+          keyword &&
+          typeof keyword.keyword === 'string' && keyword.keyword.trim().length > 0 &&
+          typeof keyword.frequency === 'number' && Number.isFinite(keyword.frequency) &&
+          typeof keyword.hot_score === 'number' && Number.isFinite(keyword.hot_score)
+        );
+        if (!stylesValid || !keywordsValid) {
+          this.recommendationError = '推荐服务返回的数据格式异常，请稍后重试';
+          return;
+        }
+
+        this.trendingStyles = data.style_recommendations;
+        this.trendingKeywords = data.hot_keywords;
+        this.recommendationsLoaded = true;
       } catch (error) {
-        console.error('加载推荐数据失败:', error);
-        this.useMockRecommendationData();
+        const status = error.response?.status;
+        if (status === 401) {
+          this.recommendationError = '登录状态已失效，请重新登录';
+        } else if (status === 403) {
+          this.recommendationError = '当前账户无权查看推荐数据';
+        } else if (status === 503) {
+          this.recommendationError = '推荐服务暂不可用，请稍后重试';
+        } else {
+          this.recommendationError = '推荐数据加载失败，请检查网络后重试';
+        }
+      } finally {
+        this.recommendationLoading = false;
       }
     },
 
-    // 添加数据转换方法
-    transformRecommendationData() {
-      // 如果后端返回的数据结构与前端期望的不同，在这里进行转换
-      // 例如：字段名映射、数据格式转换等
-      
-      // 转换风格数据（如果需要）
-      if (this.trendingStyles.length > 0) {
-        this.trendingStyles = this.trendingStyles.map(style => {
-          // 如果后端返回的字段名不同，进行映射
-          return {
-            style: style.style_name || style.name || style.style || '未知风格',
-            popularity_score: style.popularity_score || style.score || style.popularity || 0,
-            avg_satisfaction: style.avg_satisfaction || style.satisfaction || style.rating || 0
-          };
-        });
-      }
-      
-      // 转换关键词数据（如果需要）
-      if (this.trendingKeywords.length > 0) {
-        this.trendingKeywords = this.trendingKeywords.map(keyword => {
-          return {
-            keyword: keyword.keyword_name || keyword.name || keyword.keyword || '未知关键词',
-            style: keyword.style_name || keyword.style || '通用',
-            hot_score: keyword.hot_score || keyword.score || keyword.popularity || 0
-          };
-        });
-      }
-    },
-    
-    // 添加模拟数据方法
-    useMockRecommendationData() {
-      this.trendingStyles = [
-        { style: '赛博朋克', popularity_score: 95, avg_satisfaction: 4.5 },
-        { style: '水彩画风', popularity_score: 88, avg_satisfaction: 4.3 },
-        { style: '电影感', popularity_score: 82, avg_satisfaction: 4.2 },
-        { style: '极简主义', popularity_score: 78, avg_satisfaction: 4.1 },
-        { style: '复古风', popularity_score: 75, avg_satisfaction: 4.0 },
-        { style: '奇幻风格', popularity_score: 72, avg_satisfaction: 3.9 }
-      ];
-      this.trendingKeywords = [
-        { keyword: '夏日海滩', style: '清新', hot_score: 92 },
-        { keyword: '星空夜景', style: '浪漫', hot_score: 87 },
-        { keyword: '未来城市', style: '赛博朋克', hot_score: 85 },
-        { keyword: '可爱猫咪', style: '卡通', hot_score: 83 },
-        { keyword: '山水风景', style: '国画', hot_score: 80 },
-        { keyword: '抽象艺术', style: '现代', hot_score: 78 }
-      ];
-    },
-    
     // 修改 getImageUrl 方法
 getImageUrl(imageUrl) {
   if (!imageUrl) {

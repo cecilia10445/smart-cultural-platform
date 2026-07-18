@@ -25,12 +25,32 @@
       
       <!-- 数据概览卡片 -->
       <StatsCards
-        v-if="activeChart === 'overview'"
+        v-if="activeChart === 'overview' && statsLoaded && statsHasData && !statsError"
         :stats="stats"
       />
+
+      <div v-if="activeChart === 'overview' && statsLoading" class="data-state">
+        正在加载统计数据...
+      </div>
+      <div v-else-if="activeChart === 'overview' && statsError" class="data-state error-state">
+        <span>{{ statsError }}</span>
+        <button @click="loadStatsData">重试统计数据</button>
+      </div>
+      <div v-else-if="activeChart === 'overview' && statsLoaded && !statsHasData" class="data-state">
+        暂无统计数据
+      </div>
+
+      <div v-if="profileLoading" class="data-state">正在加载画像数据...</div>
+      <div v-else-if="profileError" class="data-state error-state">
+        <span>{{ profileError }}</span>
+        <button @click="loadDashboardData">重试画像数据</button>
+      </div>
+      <div v-else-if="profileLoaded && !currentChartHasData" class="data-state">
+        {{ currentChartEmptyMessage }}
+      </div>
       
       <!-- 图表容器 -->
-      <div class="chart-content">
+      <div v-if="profileLoaded && currentChartHasData && !profileError" class="chart-content">
         <!-- 数据概览 -->
         <div id="overview" class="chart-section" v-show="activeChart === 'overview'">
           <div class="chart-row">
@@ -92,10 +112,6 @@
               :data="dashboardData.hot_keywords"
               ref="wordCloudRef"
             />
-            <KeywordTrendChart
-              :data="dashboardData.hot_keywords"
-              ref="keywordTrendChartRef"
-            />
           </div>
         </div>
         
@@ -123,7 +139,6 @@ import UserBehaviorChart from '@/components/dashboard/charts/UserBehaviorChart.v
 import StylePopularityChart from '@/components/dashboard/charts/StylePopularityChart.vue'
 import StyleTrendChart from '@/components/dashboard/charts/StyleTrendChart.vue'
 import RatingDistributionChart from '@/components/dashboard/charts/RatingDistributionChart.vue'
-import KeywordTrendChart from '@/components/dashboard/charts/KeywordTrendChart.vue'
 import GenerationEfficiencyChart from '@/components/dashboard/charts/GenerationEfficiencyChart.vue'
 import WordCloud from '@/components/dashboard/charts/WordCloud.vue'
 
@@ -140,7 +155,6 @@ export default {
     StylePopularityChart,
     StyleTrendChart,
     RatingDistributionChart,
-    KeywordTrendChart,
     GenerationEfficiencyChart,
     WordCloud
   },
@@ -153,6 +167,13 @@ export default {
     })
     const dashboardData = ref({})
     const userInfo = ref({})
+    const statsLoading = ref(false)
+    const statsError = ref('')
+    const statsLoaded = ref(false)
+    const statsHasData = ref(false)
+    const profileLoading = ref(false)
+    const profileError = ref('')
+    const profileLoaded = ref(false)
     
     // 统计数据
     const stats = ref({
@@ -188,12 +209,41 @@ export default {
       })
     })
 
+    const currentChartHasData = computed(() => {
+      const data = dashboardData.value
+      const checks = {
+        overview: () => data.age_distribution.length > 0 || data.gender_distribution.length > 0,
+        'active-period': () => data.active_period_distribution.length > 0,
+        'user-behavior': () => data.user_behavior_7days.labels.length > 0,
+        'style-popularity': () => data.style_popularity.length > 0,
+        'style-trend': () => data.style_trend_30days.labels.length > 0 && data.style_trend_30days.datasets.length > 0,
+        'rating-distribution': () => data.rating_distribution.length > 0,
+        'hot-keywords': () => data.hot_keywords.length > 0,
+        'generation-efficiency': () => data.generation_efficiency.length > 0
+      }
+      return profileLoaded.value ? checks[activeChart.value]() : false
+    })
+
+    const currentChartEmptyMessage = computed(() => {
+      const messages = {
+        overview: '暂无年龄或性别分布数据',
+        'active-period': '暂无用户活跃时段数据',
+        'user-behavior': '暂无用户行为数据',
+        'style-popularity': '暂无风格热度数据',
+        'style-trend': '暂无风格趋势数据',
+        'rating-distribution': '暂无用户满意度数据',
+        'hot-keywords': '暂无热门关键词数据',
+        'generation-efficiency': '暂无生成效率数据'
+      }
+      return messages[activeChart.value]
+    })
+
     const userName = computed(() => {
-      return userInfo.value?.name || userInfo.value?.username || '运营管理员'
+      return userInfo.value?.name || userInfo.value?.username || '未登录用户'
     })
 
     const userEmail = computed(() => {
-      return userInfo.value?.username ? `${userInfo.value.username}@aigc-platform.com` : 'admin@aigc-platform.com'
+      return userInfo.value?.email || ''
     })
 
     const userInitial = computed(() => {
@@ -208,7 +258,6 @@ export default {
     const stylePopularityChartRef = ref(null)
     const styleTrendChartRef = ref(null)
     const ratingChartRef = ref(null)
-    const keywordTrendChartRef = ref(null)
     const efficiencyChartRef = ref(null)
     const wordCloudRef = ref(null)
 
@@ -257,9 +306,31 @@ export default {
     }
 
     // API 调用
+    const statusMessage = (status, resourceName) => {
+      if (status === 401) return '登录状态已失效，请重新登录'
+      if (status === 403) return `当前账户无权查看${resourceName}`
+      if (status === 503) return `${resourceName}暂不可用，请稍后重试`
+      return `${resourceName}加载失败，请检查网络后重试`
+    }
+
     const loadStatsData = async () => {
+      statsLoading.value = true
+      statsError.value = ''
+      statsLoaded.value = false
+      statsHasData.value = false
+      stats.value = {
+        totalUsers: '--',
+        totalGenerations: '--',
+        activeUsers: '--',
+        avgRating: '--'
+      }
+
       try {
         const token = localStorage.getItem('adminToken') || localStorage.getItem('token')
+        if (!token) {
+          statsError.value = '登录状态已失效，请重新登录'
+          return
+        }
         const url = new URL('/api/dashboard/stats', window.location.origin)
         
         if (dateRange.value.startDate && dateRange.value.endDate) {
@@ -267,8 +338,6 @@ export default {
           url.searchParams.append('end_date', dateRange.value.endDate)
         }
         
-        console.log('加载统计数据，URL:', url.toString())
-        
         const response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -276,48 +345,65 @@ export default {
           }
         })
         
-        console.log('响应状态:', response.status, response.statusText)
-        
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error('HTTP错误响应:', errorText)
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+          statsError.value = statusMessage(response.status, '统计数据')
+          return
         }
 
-        // 检查响应内容类型
         const contentType = response.headers.get('content-type')
         if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text()
-          console.error('非JSON响应:', text.substring(0, 200))
-          throw new Error('服务器返回了非JSON响应')
+          statsError.value = '统计服务返回的数据格式异常，请稍后重试'
+          return
         }
 
         const result = await response.json()
-        console.log('统计数据响应:', result)
-        
-        if (result.status === 'success') {
-          const statsData = result.data.stats
-          stats.value.totalUsers = statsData.totalUsers?.toLocaleString() || '0'
-          stats.value.totalGenerations = statsData.totalGenerations?.toLocaleString() || '0'
-          stats.value.activeUsers = statsData.activeUsers?.toLocaleString() || '0'
-          stats.value.avgRating = statsData.avgRating || '0.0'
-          console.log('统计数据更新完成:', stats.value)
+        const statsData = result?.data?.stats
+        if (result?.status !== 'success' || !statsData || typeof statsData !== 'object' || Array.isArray(statsData)) {
+          statsError.value = '统计服务返回的数据格式异常，请稍后重试'
+          return
         }
-      } catch (error) {
-        console.error('加载统计数据失败:', error)
-        // 设置模拟数据用于测试
+
+        const requiredStatsFields = ['totalUsers', 'totalGenerations', 'activeUsers', 'avgRating']
+        const statsKeys = Object.keys(statsData)
+        if (statsKeys.length === 0) {
+          statsLoaded.value = true
+          return
+        }
+        if (!requiredStatsFields.every(field =>
+          Object.prototype.hasOwnProperty.call(statsData, field) &&
+          typeof statsData[field] === 'number' && Number.isFinite(statsData[field])
+        )) {
+          statsError.value = '统计服务返回的数据格式异常，请稍后重试'
+          return
+        }
+
         stats.value = {
-          totalUsers: '1,234',
-          totalGenerations: '5,678',
-          activeUsers: '890',
-          avgRating: '4.5'
+          totalUsers: statsData.totalUsers.toLocaleString(),
+          totalGenerations: statsData.totalGenerations.toLocaleString(),
+          activeUsers: statsData.activeUsers.toLocaleString(),
+          avgRating: statsData.avgRating
         }
+        statsHasData.value = true
+        statsLoaded.value = true
+      } catch {
+        statsError.value = '统计数据加载失败，请检查网络后重试'
+      } finally {
+        statsLoading.value = false
       }
     }
 
     const loadDashboardData = async () => {
+      profileLoading.value = true
+      profileError.value = ''
+      profileLoaded.value = false
+      dashboardData.value = {}
+
       try {
         const token = localStorage.getItem('adminToken') || localStorage.getItem('token')
+        if (!token) {
+          profileError.value = '登录状态已失效，请重新登录'
+          return
+        }
         const url = new URL('/api/dashboard/user-profile', window.location.origin)
         
         if (dateRange.value.startDate && dateRange.value.endDate) {
@@ -325,8 +411,6 @@ export default {
           url.searchParams.append('end_date', dateRange.value.endDate)
         }
         
-        console.log('加载图表数据，URL:', url.toString())
-        
         const response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -334,99 +418,53 @@ export default {
           }
         })
         
-        console.log('响应状态:', response.status, response.statusText)
-        
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error('HTTP错误响应:', errorText)
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+          profileError.value = statusMessage(response.status, '画像数据')
+          return
         }
 
-        // 检查响应内容类型
         const contentType = response.headers.get('content-type')
         if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text()
-          console.error('非JSON响应:', text.substring(0, 200))
-          throw new Error('服务器返回了非JSON响应')
+          profileError.value = '画像服务返回的数据格式异常，请稍后重试'
+          return
         }
 
         const result = await response.json()
-        console.log('图表数据响应:', result)
-        
-        if (result.status === 'success') {
-          dashboardData.value = result.data
-          console.log('图表数据更新完成')
+        if (result?.status !== 'success' || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+          profileError.value = '画像服务返回的数据格式异常，请稍后重试'
+          return
         }
-      } catch (error) {
-        console.error('加载图表数据失败:', error)
-        // 设置模拟数据用于测试
-        dashboardData.value = getMockData()
-      }
-    }
 
-    // 模拟数据函数（如果后端API不可用）
-    const getMockData = () => {
-      return {
-        age_distribution: [
-          { age_range: '1', count: 120 },
-          { age_range: '2', count: 180 },
-          { age_range: '3', count: 90 },
-          { age_range: '4', count: 40 },
-          { age_range: '5', count: 20 }
-        ],
-        gender_distribution: [
-          { gender: 'female', count: 200 },
-          { gender: 'male', count: 250 }
-        ],
-        active_period_distribution: [
-          { period: '00:00-06:00', count: 50 },
-          { period: '06:00-12:00', count: 120 },
-          { period: '12:00-18:00', count: 180 },
-          { period: '18:00-24:00', count: 100 }
-        ],
-        user_behavior_7days: {
-          labels: ['10-13', '10-14', '10-15', '10-16', '10-17', '10-18', '10-19'],
-          generation_data: [120, 150, 180, 200, 170, 190, 210],
-          download_data: [80, 100, 120, 150, 130, 140, 160]
-        },
-        style_popularity: [
-          { style: '现代简约', usage_count: 450 },
-          { style: '复古风格', usage_count: 380 },
-          { style: '自然风光', usage_count: 320 },
-          { style: '抽象艺术', usage_count: 280 },
-          { style: '城市建筑', usage_count: 250 }
-        ],
-        style_trend_30days: {
-          labels: ['09-20', '09-25', '09-30', '10-05', '10-10', '10-15', '10-19'],
-          datasets: [
-            { label: '现代简约', data: [120, 130, 140, 150, 160, 170, 180] },
-            { label: '复古风格', data: [100, 110, 120, 130, 140, 150, 160] },
-            { label: '自然风光', data: [80, 90, 100, 110, 120, 130, 140] }
-          ]
-        },
-        rating_distribution: [
-          { rating: 1, count: 10 },
-          { rating: 2, count: 25 },
-          { rating: 3, count: 80 },
-          { rating: 4, count: 200 },
-          { rating: 5, count: 500 }
-        ],
-        hot_keywords: [
-          { keyword: '风景', frequency: 150 },
-          { keyword: '人物', frequency: 120 },
-          { keyword: '建筑', frequency: 100 },
-          { keyword: '动物', frequency: 80 },
-          { keyword: '植物', frequency: 70 },
-          { keyword: '天空', frequency: 60 },
-          { keyword: '海洋', frequency: 50 }
-        ],
-        generation_efficiency: [
-          { time_range: '<1秒', count: 300 },
-          { time_range: '1-3秒', count: 450 },
-          { time_range: '3-5秒', count: 200 },
-          { time_range: '5-10秒', count: 80 },
-          { time_range: '>10秒', count: 20 }
-        ]
+        const data = result.data
+        const arraysValid = [
+          'age_distribution',
+          'gender_distribution',
+          'active_period_distribution',
+          'style_popularity',
+          'rating_distribution',
+          'hot_keywords',
+          'generation_efficiency'
+        ].every(field => Array.isArray(data[field]))
+        const behaviorValid = data.user_behavior_7days &&
+          typeof data.user_behavior_7days === 'object' &&
+          !Array.isArray(data.user_behavior_7days) &&
+          Array.isArray(data.user_behavior_7days.labels)
+        const styleTrendValid = data.style_trend_30days &&
+          typeof data.style_trend_30days === 'object' &&
+          !Array.isArray(data.style_trend_30days) &&
+          Array.isArray(data.style_trend_30days.labels) &&
+          Array.isArray(data.style_trend_30days.datasets)
+        if (!arraysValid || !behaviorValid || !styleTrendValid) {
+          profileError.value = '画像服务返回的数据格式异常，请稍后重试'
+          return
+        }
+
+        dashboardData.value = data
+        profileLoaded.value = true
+      } catch {
+        profileError.value = '画像数据加载失败，请检查网络后重试'
+      } finally {
+        profileLoading.value = false
       }
     }
 
@@ -444,7 +482,7 @@ export default {
             'style-popularity': [stylePopularityChartRef],
             'style-trend': [styleTrendChartRef],
             'rating-distribution': [ratingChartRef],
-            'hot-keywords': [keywordTrendChartRef, wordCloudRef],
+            'hot-keywords': [wordCloudRef],
             'generation-efficiency': [efficiencyChartRef]
           }
 
@@ -505,6 +543,15 @@ export default {
       dashboardData,
       userInfo,
       stats,
+      statsLoading,
+      statsError,
+      statsLoaded,
+      statsHasData,
+      profileLoading,
+      profileError,
+      profileLoaded,
+      currentChartHasData,
+      currentChartEmptyMessage,
       navItems,
       chartTitle,
       currentDate,
@@ -518,7 +565,6 @@ export default {
       stylePopularityChartRef,
       styleTrendChartRef,
       ratingChartRef,
-      keywordTrendChartRef,
       efficiencyChartRef,
       wordCloudRef,
       switchChart,
@@ -526,6 +572,8 @@ export default {
       resetDateRange,
       selectLast7Days,
       selectLast30Days,
+      loadStatsData,
+      loadDashboardData,
       logout
     }
   }
@@ -599,10 +647,37 @@ export default {
 #hot-keywords .chart-row {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 20px;
   height: 100%;
   min-height: 0;
+}
+
+.data-state {
+  margin: 20px 30px 0;
+  padding: 18px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #242424;
+  color: #ddd;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.data-state.error-state {
+  border-color: #8b4545;
+  color: #ffb4b4;
+}
+
+.data-state button {
+  border: 1px solid #777;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 /* 响应式调整 */
