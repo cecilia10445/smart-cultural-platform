@@ -54,13 +54,22 @@ def mysql_container_database():
             command.upgrade(Config("alembic.ini"), "head")
             username = "integration_app"
             password = secrets.token_urlsafe(24)
+            etl_username = "integration_etl"
+            etl_password = secrets.token_urlsafe(24)
             with engine.begin() as connection:
                 connection.exec_driver_sql(f"CREATE USER '{username}'@'%%' IDENTIFIED BY %s", (password,))
                 database = connection.exec_driver_sql("SELECT DATABASE()").scalar_one()
                 connection.exec_driver_sql(
                     f"GRANT SELECT, INSERT, UPDATE ON `{database}`.* TO '{username}'@'%%'"
                 )
+                connection.exec_driver_sql(f"CREATE USER '{etl_username}'@'%%' IDENTIFIED BY %s", (etl_password,))
+                for table, privileges in {
+                    "alembic_version": "SELECT", "generation_logs": "SELECT",
+                    "etl_batches": "SELECT, INSERT, UPDATE", "data_quality_results": "SELECT, INSERT",
+                }.items():
+                    connection.exec_driver_sql(f"GRANT {privileges} ON `{database}`.`{table}` TO '{etl_username}'@'%%'")
                 grants = [row[0] for row in connection.exec_driver_sql(f"SHOW GRANTS FOR '{username}'@'%%'")]
+                etl_grants = [row[0] for row in connection.exec_driver_sql(f"SHOW GRANTS FOR '{etl_username}'@'%%'")]
             yield SecretSafeDatabase({
                 "engine": engine,
                 "host": host,
@@ -68,6 +77,10 @@ def mysql_container_database():
                 "database": mysql.dbname,
                 "username": username,
                 "password": password,
+                "admin_password": mysql.root_password,
+                "etl_username": etl_username,
+                "etl_password": etl_password,
+                "etl_grants": etl_grants,
                 "grants": grants,
                 "historical_expected": historical_expected,
             })

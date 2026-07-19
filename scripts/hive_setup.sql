@@ -21,13 +21,13 @@ CREATE TABLE IF NOT EXISTS ${HIVE_DATABASE}.ods_generation_logs (
     data_origin STRING,
     created_at TIMESTAMP COMMENT 'Database insert time',
     updated_at TIMESTAMP COMMENT 'Database last-update time',
-    etl_batch_id BIGINT COMMENT 'etl_batches.batch_id used for this extraction',
     ingested_at TIMESTAMP COMMENT 'Time this row entered the ODS partition'
 )
 PARTITIONED BY (
-    extract_date DATE COMMENT 'UTC calendar date on which the incremental extraction ran'
+    extract_date DATE COMMENT 'UTC calendar date on which the incremental extraction ran',
+    etl_batch_id BIGINT COMMENT 'etl_batches.batch_id used for this extraction'
 )
 STORED AS PARQUET
 TBLPROPERTIES (
-    'comment'='ODS copy of MySQL generation_logs; no synthetic fallback data'
+    'comment'='ODS copy of MySQL generation_logs, no synthetic fallback data'
 );
