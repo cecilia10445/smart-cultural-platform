@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
-from pyspark.ml.feature import Tokenizer, StopWordsRemover, StringIndexer, VectorAssembler
-from pyspark.ml.recommendation import ALS
-from pyspark.ml.clustering import KMeans
-from pyspark.ml import Pipeline
-from pyspark.ml.linalg import Vectors
-import json
-from datetime import datetime, timedelta
-from pyspark.sql.functions import rand, when, mean, stddev, min, max, col, count, avg, countDistinct
-from pyspark.sql.window import Window  # 添加Window导入
+"""Retired legacy ETL entry point; Round 10 owns the replacement pipeline."""
+import sys
+
+
+DISABLED_MESSAGE = "Legacy Spark ETL is disabled pending the Round 10 incremental pipeline"
+
 
 def main():
+    raise RuntimeError(DISABLED_MESSAGE)
+
+
+if __name__ == "__main__":
+    print(DISABLED_MESSAGE, file=sys.stderr)
+    raise SystemExit(1)
+
+
+import json
+import os
+from datetime import datetime, timedelta
+
+def legacy_pipeline_body():
     print("=== 智能文创平台增强版Spark ETL与推荐系统 ===")
     
     spark = SparkSession.builder \
@@ -891,49 +898,27 @@ def extract_popular_keywords(df):
     return user_profiles
 
 
-def save_results_to_mysql(spark, dashboard_data, user_recommendations, user_profiles,enhanced_df):
+def load_mysql_jdbc_config():
+    """Load analytics-output JDBC settings without supplying credential defaults."""
+    names = ("SPARK_MYSQL_JDBC_URL", "SPARK_MYSQL_USER", "SPARK_MYSQL_PASSWORD")
+    missing = [name for name in names if not os.getenv(name)]
+    if missing:
+        raise RuntimeError("missing required Spark MySQL settings: " + ", ".join(missing))
+    return os.environ["SPARK_MYSQL_JDBC_URL"], {
+        "user": os.environ["SPARK_MYSQL_USER"],
+        "password": os.environ["SPARK_MYSQL_PASSWORD"],
+        "driver": "com.mysql.cj.jdbc.Driver",
+    }
+
+
+def save_results_to_mysql(spark, dashboard_data, user_recommendations, user_profiles, enhanced_df):
     """保存结果到MySQL的aigc_platform数据库"""
     
-    # MySQL连接配置
-    mysql_properties = {
-        "user": "root",
-        "password": "123456", 
-        "driver": "com.mysql.cj.jdbc.Driver"
-    }
-    mysql_url = "jdbc:mysql://localhost:3306/aigc_platform"
+    mysql_url, mysql_properties = load_mysql_jdbc_config()
     
     try:
         print("💾 开始保存数据到MySQL aigc_platform数据库...")
         
-        print("📝 保存历史记录表 generation_logs...")
-        try:
-            # 选择与实时日志一致的字段
-            generation_logs_df = enhanced_df.select(
-                "user_id",
-                "event_type", 
-                "timestamp",
-                "prompt",
-                "style",
-                "image_url",
-                "title",
-                "content",
-                "generation_time",
-                "content_length",
-                "user_rating",
-                "download_count",
-                "user_age",
-                "user_gender",
-                "login_time",
-            ).filter(col("event_type").isin(["generate", "download"]))
-            
-            generation_logs_df.write \
-                .mode("overwrite") \
-                .jdbc(mysql_url, "generation_logs", properties=mysql_properties)
-            print("✅ 历史记录表保存完成")
-            
-        except Exception as e:
-            print(f"❌ 历史记录表保存失败: {e}")
-
         # 1. 保存运营端仪表盘数据
         # 用户画像仪表盘数据
         if 'age_distribution' in dashboard_data:
@@ -1024,7 +1009,6 @@ def save_results_to_mysql(spark, dashboard_data, user_recommendations, user_prof
         # 验证数据 - 显示各表记录数
         print("\n📊 数据保存统计:")
         table_records = {
-            "generation_logs": generation_logs_df, 
             "user_age_distribution": dashboard_data.get('age_distribution'),
             "user_gender_distribution": dashboard_data.get('gender_distribution'),
             "user_active_period_distribution": dashboard_data.get('active_period_distribution'),

@@ -1,5 +1,7 @@
 import os
 import secrets
+from datetime import datetime
+from decimal import Decimal
 from urllib.parse import quote_plus
 
 import pytest
@@ -27,8 +29,29 @@ def mysql_container_database():
         os.environ["MIGRATION_DATABASE_URL"] = admin_url
         engine = None
         try:
-            command.upgrade(Config("alembic.ini"), "head")
             engine = sa.create_engine(admin_url, hide_parameters=True)
+            command.upgrade(Config("alembic.ini"), "0001")
+            historical_expected = {
+                "user_id": "history-user", "event_type": "generate",
+                "timestamp": datetime(2026, 1, 1, 0, 0, 0),
+                "prompt": "historical prompt", "style": "historical-style",
+                "image_url": None, "title": "historical title", "content": "historical content",
+                "generation_time": Decimal("1.250"), "content_length": 17,
+                "user_rating": None, "download_count": 2, "user_age": None,
+                "user_gender": None, "login_time": None, "data_origin": "test",
+            }
+            with engine.begin() as connection:
+                result = connection.execute(sa.text(
+                    """INSERT INTO generation_logs
+                    (user_id,event_type,timestamp,prompt,style,image_url,title,content,
+                     generation_time,content_length,user_rating,download_count,user_age,
+                     user_gender,login_time,data_origin)
+                    VALUES (:user_id,:event_type,:timestamp,:prompt,:style,:image_url,:title,
+                            :content,:generation_time,:content_length,:user_rating,:download_count,
+                            :user_age,:user_gender,:login_time,:data_origin)"""
+                ), historical_expected)
+                historical_expected["id"] = result.lastrowid
+            command.upgrade(Config("alembic.ini"), "head")
             username = "integration_app"
             password = secrets.token_urlsafe(24)
             with engine.begin() as connection:
@@ -46,6 +69,7 @@ def mysql_container_database():
                 "username": username,
                 "password": password,
                 "grants": grants,
+                "historical_expected": historical_expected,
             })
         finally:
             if engine is not None:

@@ -1,17 +1,17 @@
 # Smart Cultural Platform
 
-## Windows unit-test environment
+## Unit-test environment
 
-Windows tests use Flask's test client and mocks for DashScope, MySQL, and Hive. They do not require an API key, Hadoop, HiveServer2, HDFS, YARN, or a Linux shell.
+Default tests use Flask's test client and controlled substitutes for external services. They do not start Docker, Hive, Spark, or DashScope. The explicitly enabled MySQL integration test uses an isolated Testcontainers database and Alembic migrations.
 
-```powershell
-python -m pytest backend/tests -q
+```bash
+backend/.venv/bin/python -m pytest backend/tests -q -p no:cacheprovider
 ```
 
 Copy `backend/.env.example` to `backend/.env` only for local application runs. Never commit a real `.env` file.
 
-## Linux integration environment
+## Data pipeline status
 
-The complete data pipeline must be verified separately in the Ubuntu virtual machine: MySQL, Hadoop/HDFS, HiveServer2, YARN, Spark, the MySQL JDBC driver, and the project shell scripts are required. These integrations are not covered by the Windows unit tests and must not be reported as passed until they are run there.
+MySQL `generation_logs` is the online source of truth. Alembic defines the target schema for new environments. The Hive ODS contract and ETL safety boundary are versioned in this repository, but the actual incremental MySQL-to-Hive transfer, Spark aggregation, and analytics-table writeback are not implemented yet.
 
-Current first-batch scope: Flask security, honest dependency failures, and mocked Windows unit tests. Spark ETL and front-end changes are deliberately deferred.
+Do not run the legacy Spark ETL entry point or any destructive legacy SQL. See `docs/data-pipeline-contract.md` for the implemented contract and the remaining Round 10 work.
