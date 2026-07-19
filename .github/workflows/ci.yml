@@ -24,6 +24,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Install SASL build headers
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libsasl2-dev
+
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements.txt
 
