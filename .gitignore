@@ -6,6 +6,8 @@ backend/venv/
 .test-venv/
 frontend/node_modules/
 frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
 desktop.ini
 **/__pycache__/
 *.py[cod]
