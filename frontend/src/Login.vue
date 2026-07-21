@@ -1,500 +1,196 @@
 <template>
-  <div class="login-page">
-    <!-- 登录容器 -->
-    <div class="login-container">
-      <div class="logo">
-        <h1>🎨 智能文创平台</h1>
-        <p>请选择身份登录</p>
-      </div>
-      
-      <!-- 角色选择 -->
-      <div class="role-selector">
-        <div class="role-option" 
-             :class="{ active: loginType === 'user' }"
-             @click="loginType = 'user'">
-          👤 用户登录
-        </div>
-        <div class="role-option" 
-             :class="{ active: loginType === 'admin' }"
-             @click="loginType = 'admin'">
-          🛠️ 运营登录
-        </div>
-      </div>
-      
-      <!-- 登录表单 -->
-      <form @submit.prevent="handleLogin">
-        <div class="form-group">
-          <label for="username">用户名</label>
-          <input type="text" id="username" v-model="username" placeholder="请输入用户名" required>
-        </div>
-        <div class="form-group">
-          <label for="password">密码</label>
-          <input type="password" id="password" v-model="password" placeholder="请输入密码" required>
-        </div>
-        
-        <!-- 错误提示 -->
-        <div v-if="error" class="error-message">
-          ❌ {{ error }}
-        </div>
-        
-        <!-- 登录按钮 -->
-        <button type="submit" class="login-btn" :disabled="loading">
-          <span v-if="loading">🔄 登录中...</span>
-          <span v-else>🚀 立即登录</span>
+  <main class="login-page">
+    <section class="login-intro" aria-labelledby="platform-title">
+      <div class="seal-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="eyebrow">SMART CULTURAL PLATFORM / 01</p>
+      <h1 id="platform-title">智能文创平台</h1>
+      <p class="intro-copy">以清晰的创作需求，生成可追溯的图文内容。</p>
+      <dl class="intro-notes" aria-label="平台工作方式">
+        <div><dt>输入</dt><dd>主题与风格</dd></div>
+        <div><dt>生成</dt><dd>图文创作请求</dd></div>
+        <div><dt>记录</dt><dd>真实结果留存</dd></div>
+      </dl>
+    </section>
+
+    <section class="login-panel" aria-labelledby="login-title">
+      <p class="eyebrow">ACCESS PORTAL</p>
+      <h2 id="login-title">进入工作台</h2>
+      <p class="panel-copy">请选择与账户匹配的身份后登录。</p>
+
+      <div class="role-selector" role="group" aria-label="登录身份">
+        <button
+          type="button"
+          class="role-option"
+          :class="{ active: loginType === 'user' }"
+          :aria-pressed="loginType === 'user'"
+          @click="selectRole('user')"
+        >
+          普通用户
+          <small>创作工作台</small>
         </button>
-        
-        <!-- 注册入口（区分用户和运营） -->
-        <div class="register-options">
-          <div class="register-type">
-            普通用户注册？
-            <button type="button" class="register-btn" @click="openRegister('user')">
-              点击注册
-            </button>
-          </div>
-          <div class="register-type">
-            运营账号注册？
-            <button type="button" class="register-btn" @click="openRegister('admin')">
-              点击注册（需密钥）
-            </button>
-          </div>
-        </div>
-      </form>
-    </div>
-    
-    <!-- 注册弹窗（默认隐藏） -->
-    <div v-if="showRegister" class="modal-overlay">
-      <div class="modal-container">
-        <div class="modal-header">
-          <h2>
-            <span v-if="registerRole === 'user'">📝 用户注册</span>
-            <span v-if="registerRole === 'admin'">🔑 运营注册</span>
-          </h2>
-          <button class="close-btn" @click="showRegister = false">×</button>
-        </div>
-        
-        <form @submit.prevent="handleRegister">
-          <!-- 运营注册需要密钥验证 -->
-          <div v-if="registerRole === 'admin'" class="form-group">
-            <label for="regKey">运营注册密钥</label>
-            <input type="password" id="regKey" v-model="registerForm.key" placeholder="请输入运营密钥" required>
-            <p class="key-hint">提示：密钥由系统管理员提供</p>
-          </div>
-          
-          <div class="form-group">
-            <label for="regUsername">用户名</label>
-            <input type="text" id="regUsername" v-model="registerForm.username" placeholder="3-12位字符" required>
-          </div>
-          <div class="form-group">
-            <label for="regPassword">密码</label>
-            <input type="password" id="regPassword" v-model="registerForm.password" placeholder="6-16位字符" required>
-          </div>
-          <div class="form-group">
-            <label for="regName">姓名</label>
-            <input type="text" id="regName" v-model="registerForm.name" placeholder="请输入姓名" required>
-          </div>
-          
-          <!-- 注册错误提示 -->
-          <div v-if="registerError" class="error-message">
-            ❌ {{ registerError }}
-          </div>
-          
-          <!-- 注册按钮 -->
-          <button type="submit" class="login-btn" :disabled="registerLoading">
-            <span v-if="registerLoading">🔄 注册中...</span>
-            <span v-else>
-              <span v-if="registerRole === 'user'">✅ 完成注册</span>
-              <span v-if="registerRole === 'admin'">✅ 验证并注册</span>
-            </span>
-          </button>
-        </form>
+        <button
+          type="button"
+          class="role-option"
+          :class="{ active: loginType === 'admin' }"
+          :aria-pressed="loginType === 'admin'"
+          @click="selectRole('admin')"
+        >
+          运营用户
+          <small>运营面板</small>
+        </button>
       </div>
-    </div>
-  </div>
+
+      <form @submit.prevent="handleLogin" novalidate>
+        <div class="field-group">
+          <label for="username">用户名</label>
+          <input
+            id="username"
+            v-model="username"
+            type="text"
+            autocomplete="username"
+            placeholder="请输入用户名"
+            :aria-describedby="error ? 'login-error' : undefined"
+            :disabled="loading"
+          >
+        </div>
+        <div class="field-group">
+          <label for="password">密码</label>
+          <input
+            id="password"
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="请输入密码"
+            :aria-describedby="error ? 'login-error' : undefined"
+            :disabled="loading"
+          >
+        </div>
+
+        <p v-if="error" id="login-error" class="error-message" role="alert">{{ error }}</p>
+
+        <button type="submit" class="submit-button" :disabled="loading">
+          <span v-if="loading" class="loading-label"><span class="inline-spinner" aria-hidden="true"></span>正在验证身份</span>
+          <span v-else>进入{{ loginType === 'admin' ? '运营面板' : '创作工作台' }}</span>
+        </button>
+      </form>
+
+      <p class="access-note">账户由平台管理员统一维护。登录信息仅用于本次身份验证。</p>
+    </section>
+  </main>
 </template>
 
 <script>
-import axios from 'axios';
+import axios from 'axios'
 
 export default {
   name: 'LoginPage',
   data() {
     return {
-      // 登录相关
-      loginType: 'user', // user 或 admin
+      loginType: 'user',
       username: '',
       password: '',
       loading: false,
-      error: '',
-      
-      // 注册相关
-      showRegister: false,       // 控制注册弹窗显示
-      registerRole: 'user',      // 记录当前注册角色（user/admin）
-      registerForm: {
-        username: '',
-        password: '',
-        name: '',
-        key: ''                   // 运营注册密钥
-      },
-      registerLoading: false,
-      registerError: '',
-      // 运营注册密钥（与后端脚本保持一致）
-      ADMIN_CREATION_KEY: "9876543210"
+      error: ''
     }
   },
   methods: {
-    // 登录处理
+    selectRole(role) {
+      this.loginType = role
+      this.error = ''
+    },
+    loginErrorMessage(error) {
+      const status = error.response?.status
+      if (status === 401) return '用户名、密码或所选身份不匹配，请重新确认。'
+      if (status === 403) return '当前账户没有访问该入口的权限。'
+      if (status === 503) return '认证服务暂时不可用，请稍后重试。'
+      if (status) return '登录请求未能完成，请稍后重试。'
+      if (error.request) return '无法连接认证服务，请检查网络后重试。'
+      return '登录响应格式异常，请稍后重试。'
+    },
     async handleLogin() {
+      if (this.loading) return
       if (!this.username.trim() || !this.password.trim()) {
-        this.error = '用户名和密码不能为空';
-        return;
+        this.error = '请填写用户名和密码后再继续。'
+        return
       }
 
-      this.loading = true;
-      this.error = '';
+      this.loading = true
+      this.error = ''
       try {
         const response = await axios.post('/api/login', {
           username: this.username.trim(),
-          password: this.password.trim(),
+          password: this.password,
           role: this.loginType
-        });
+        })
+        const body = response.data
+        if (body?.status !== 'success' || typeof body.token !== 'string' || !body.token || !body.user || typeof body.user !== 'object') {
+          this.error = '登录响应格式异常，请稍后重试。'
+          return
+        }
 
-        if (response.data.status === 'success') {
-          // 保存用户信息和Token
-          localStorage.setItem('userInfo', JSON.stringify(response.data.user));
-          localStorage.setItem('token', response.data.token);
-          
-          // 如果是运营登录，额外保存到admin相关字段
-          if (this.loginType === 'admin') {
-            localStorage.setItem('adminToken', response.data.token);
-            localStorage.setItem('adminUser', JSON.stringify(response.data.user));
-          }
-          
-          // 跳转对应页面
-          window.location.href = this.loginType === 'user' ? '/index.html' : '/dashboard.html';
+        localStorage.setItem('userInfo', JSON.stringify(body.user))
+        localStorage.setItem('token', body.token)
+        if (this.loginType === 'admin') {
+          localStorage.setItem('adminToken', body.token)
+          localStorage.setItem('adminUser', JSON.stringify(body.user))
         } else {
-          this.error = response.data.message || '登录失败，请重试';
+          localStorage.removeItem('adminToken')
+          localStorage.removeItem('adminUser')
         }
+        window.location.href = this.loginType === 'admin' ? '/dashboard.html' : '/index.html'
       } catch (error) {
-        console.error('登录错误:', error);
-        this.error = error.response?.data?.message || '网络异常，请稍后重试';
+        this.error = this.loginErrorMessage(error)
       } finally {
-        this.loading = false;
-      }
-    },
-
-    // 打开注册弹窗（区分角色）
-    openRegister(role) {
-      this.registerRole = role;
-      this.showRegister = true;
-      // 重置表单和错误信息
-      this.registerForm = { username: '', password: '', name: '', key: '' };
-      this.registerError = '';
-    },
-
-    // 注册处理
-    async handleRegister() {
-      // 表单基础校验
-      if (this.registerForm.username.trim().length < 3 || this.registerForm.username.trim().length > 12) {
-        this.registerError = '用户名需3-12位字符';
-        return;
-      }
-      if (this.registerForm.password.trim().length < 6 || this.registerForm.password.trim().length > 16) {
-        this.registerError = '密码需6-16位字符';
-        return;
-      }
-      if (!this.registerForm.name.trim()) {
-        this.registerError = '请输入姓名';
-        return;
-      }
-
-      // 运营注册额外校验密钥
-      if (this.registerRole === 'admin') {
-        if (this.registerForm.key !== this.ADMIN_CREATION_KEY) {
-          this.registerError = '运营密钥错误，请联系管理员';
-          return;
-        }
-      }
-
-      this.registerLoading = true;
-      this.registerError = '';
-      try {
-        const response = await axios.post('/api/register', {
-          username: this.registerForm.username.trim(),
-          password: this.registerForm.password.trim(),
-          name: this.registerForm.name.trim(),
-          role: this.registerRole  // 传递注册角色（user/admin）
-        });
-
-        if (response.data.status === 'success') {
-          alert(`${this.registerRole === 'user' ? '用户' : '运营'}注册成功！即将跳转到登录页`);
-          this.showRegister = false;
-          // 自动填充用户名到登录框
-          this.username = this.registerForm.username;
-          // 切换到对应登录角色
-          this.loginType = this.registerRole;
-        } else {
-          this.registerError = response.data.message || '注册失败，请重试';
-        }
-      } catch (error) {
-        console.error('注册错误:', error);
-        this.registerError = error.response?.data?.message || '网络异常，请稍后重试';
-      } finally {
-        this.registerLoading = false;
+        this.loading = false
       }
     }
-  },
-  mounted() {
-    console.log('登录页面已加载');
   }
 }
 </script>
 
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body { 
-  font-family: 'Microsoft YaHei', sans-serif; 
-  margin: 0;
-  padding: 0;
-  min-height: 100vh;
-}
-
-.login-page {
-  position: relative;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  /* 使用正确的图片路径 */
-  background: 
-    linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
-    url('/images/back.png');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-}
-
-/* 登录容器 - 白灰色风格 */
-.login-container {
-  background: rgba(255, 255, 255, 0.95);
-  padding: 45px 40px;
-  border-radius: 18px;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
-  width: 100%;
-  max-width: 420px;
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-/* Logo区域 */
-.logo {
-  text-align: center;
-  margin-bottom: 35px;
-}
-.logo h1 {
-  font-size: 2.4em;
-  color: #2c3e50;
-  margin-bottom: 8px;
-  letter-spacing: -0.5px;
-}
-.logo p {
-  color: #7f8c8d;
-  font-size: 1.05em;
-}
-
-/* 角色选择器 */
-.role-selector {
-  display: flex;
-  margin-bottom: 30px;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 2px solid #ecf0f1;
-  background: #f8f9fa;
-}
-.role-option {
-  flex: 1;
-  padding: 14px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  background: #f8f9fa;
-  font-size: 1em;
-  font-weight: 500;
-  color: #5a6c7d;
-}
-.role-option.active {
-  background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%);
-  color: white;
-  border-color: transparent;
-}
-.role-option:first-child {
-  border-right: 1px solid #ecf0f1;
-}
-
-/* 表单样式 */
-.form-group {
-  margin-bottom: 25px;
-}
-.form-group label {
-  display: block;
-  margin-bottom: 10px;
-  font-weight: 600;
-  color: #34495e;
-  font-size: 1.05em;
-}
-.form-group input {
-  width: 100%;
-  padding: 14px 16px;
-  border: 2px solid #e0e6ed;
-  border-radius: 10px;
-  font-size: 1em;
-  transition: all 0.3s ease;
-  background: #ffffff;
-  color: #2c3e50;
-}
-.form-group input:focus {
-  outline: none;
-  border-color: #34495e;
-  box-shadow: 0 0 0 3px rgba(52, 73, 94, 0.1);
-  background: #ffffff;
-}
-.form-group input::placeholder {
-  color: #a0aec0;
-}
-
-/* 按钮样式 */
-.login-btn {
-  width: 100%;
-  padding: 15px;
-  background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%);
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-size: 1.1em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(52, 73, 94, 0.2);
-}
-.login-btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(52, 73, 94, 0.3);
-}
-.login-btn:active {
-  transform: translateY(0);
-}
-.login-btn:disabled {
-  background: #bdc3c7;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-/* 错误提示 */
-.error-message {
-  background: #ffeaea;
-  color: #c0392b;
-  padding: 12px 16px;
-  border-radius: 8px;
-  margin-bottom: 25px;
-  border-left: 4px solid #c0392b;
-  font-size: 0.95em;
-}
-
-/* 注册入口 */
-.register-options {
-  text-align: center;
-  margin-top: 22px;
-  font-size: 0.95em;
-  color: #7f8c8d;
-}
-.register-type {
-  margin: 8px 0;
-}
-.register-btn {
-  background: transparent;
-  border: none;
-  color: #34495e;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 2px 4px;
-  transition: all 0.2s ease;
-  text-decoration: none;
-}
-.register-btn:hover {
-  color: #2c3e50;
-  text-decoration: underline;
-}
-
-/* 注册弹窗 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 20px;
-}
-.modal-container {
-  background: rgba(255, 255, 255, 0.98);
-  padding: 40px;
-  border-radius: 18px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(15px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-}
-.modal-header h2 {
-  color: #2c3e50;
-  font-size: 1.8em;
-  font-weight: 600;
-}
-.close-btn {
-  background: transparent;
-  border: none;
-  font-size: 1.8em;
-  cursor: pointer;
-  color: #7f8c8d;
-  transition: color 0.2s ease;
-}
-.close-btn:hover {
-  color: #c0392b;
-}
-
-/* 密钥提示 */
-.key-hint {
-  font-size: 0.85em;
-  color: #7f8c8d;
-  margin-top: -15px;
-  margin-bottom: 20px;
-  font-style: italic;
-}
-
-/* 响应式适配 */
-@media (max-width: 480px) {
-  .login-container, .modal-container {
-    padding: 35px 25px;
-  }
-  .logo h1 {
-    font-size: 2em;
-  }
-  .role-option {
-    padding: 12px;
-    font-size: 0.95em;
-  }
-}
+:root { color: #17221f; background: #f3f0e8; font-family: "Noto Serif CJK SC", "Songti SC", "STSong", serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f3f0e8; }
+button, input { font: inherit; }
+.login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr); background: #f3f0e8; }
+.login-intro { position: relative; overflow: hidden; padding: clamp(3rem, 9vw, 8rem) clamp(2rem, 10vw, 10rem); display: flex; flex-direction: column; justify-content: center; border-right: 1px solid #c9c3b6; background-color: #e9e5d9; background-image: repeating-linear-gradient(90deg, rgba(40, 57, 47, .045) 0, rgba(40, 57, 47, .045) 1px, transparent 1px, transparent 64px); }
+.login-intro::after { content: "文创"; position: absolute; right: -1.2rem; bottom: -3rem; color: rgba(36, 82, 68, .09); font-size: clamp(11rem, 25vw, 22rem); line-height: 1; font-weight: 700; pointer-events: none; }
+.seal-mark { width: 78px; height: 78px; margin-bottom: 2.5rem; border: 1px solid #245244; border-radius: 50%; display: grid; place-content: center; gap: 5px; transform: rotate(-8deg); }
+.seal-mark span { display: block; width: 31px; height: 5px; background: #245244; }
+.seal-mark span:nth-child(2) { width: 44px; background: #a44536; }
+.seal-mark span:nth-child(3) { width: 22px; margin-left: 11px; }
+.eyebrow { margin: 0 0 1rem; color: #5d675e; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .72rem; font-weight: 700; letter-spacing: .16em; }
+.login-intro h1, .login-panel h2 { margin: 0; font-weight: 700; letter-spacing: .04em; }
+.login-intro h1 { max-width: 7em; font-size: clamp(3rem, 6.2vw, 6.2rem); line-height: 1.12; }
+.intro-copy { max-width: 25rem; margin: 1.75rem 0 2.5rem; color: #3f4a43; font-size: 1.1rem; line-height: 1.9; }
+.intro-notes { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 34rem; margin: 0; border-top: 1px solid #a9afa5; }
+.intro-notes div { padding: 1rem .75rem 0 0; }
+.intro-notes dt { color: #245244; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .72rem; font-weight: 700; letter-spacing: .12em; }
+.intro-notes dd { margin: .45rem 0 0; color: #3d453f; font-size: .9rem; }
+.login-panel { align-self: center; width: min(100%, 31rem); margin: 0 auto; padding: clamp(2rem, 6vw, 5rem) clamp(1.5rem, 5vw, 4rem); }
+.login-panel h2 { font-size: clamp(2rem, 3.4vw, 3.1rem); line-height: 1.2; }
+.panel-copy { margin: .8rem 0 2.25rem; color: #5c655e; line-height: 1.7; }
+.role-selector { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-bottom: 2rem; }
+.role-option { min-height: 76px; padding: .9rem; text-align: left; color: #39433c; background: transparent; border: 1px solid #b9b9aa; border-radius: 0; cursor: pointer; transition: border-color .18s ease, background-color .18s ease, color .18s ease; }
+.role-option small { display: block; margin-top: .35rem; color: inherit; opacity: .72; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .75rem; }
+.role-option:hover, .role-option.active { color: #fffdf5; border-color: #245244; background: #245244; }
+.field-group { margin-bottom: 1.2rem; }
+.field-group label { display: block; margin-bottom: .55rem; color: #303a33; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .87rem; font-weight: 700; }
+.field-group input { width: 100%; min-height: 52px; padding: .75rem .85rem; color: #17221f; background: #fbfaf5; border: 1px solid #aeb1a5; border-radius: 0; outline: none; transition: border-color .18s ease, box-shadow .18s ease; }
+.field-group input::placeholder { color: #758076; }
+.field-group input:focus-visible, .role-option:focus-visible, .submit-button:focus-visible { outline: 3px solid #a44536; outline-offset: 3px; }
+.field-group input:focus { border-color: #245244; box-shadow: inset 0 -2px 0 #245244; }
+.error-message { margin: 1rem 0; padding: .8rem .9rem; color: #7d241d; background: #f7e7df; border-left: 4px solid #a44536; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .9rem; line-height: 1.55; }
+.submit-button { width: 100%; min-height: 54px; margin-top: .45rem; color: #fffdf5; background: #17221f; border: 1px solid #17221f; border-radius: 0; cursor: pointer; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-weight: 700; transition: background-color .18s ease, transform .18s ease; }
+.submit-button:hover:not(:disabled) { background: #245244; }
+.submit-button:active:not(:disabled) { transform: translateY(1px); }
+.submit-button:disabled { opacity: .68; cursor: wait; }
+.loading-label { display: inline-flex; align-items: center; gap: .55rem; }
+.inline-spinner { width: 1rem; height: 1rem; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+.access-note { margin: 1.35rem 0 0; color: #697169; font-size: .82rem; line-height: 1.65; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) { .login-page { grid-template-columns: 1fr; } .login-intro { min-height: 34vh; padding: 2.25rem 1.5rem 2.5rem; border-right: 0; border-bottom: 1px solid #c9c3b6; } .login-intro::after { font-size: 10rem; bottom: -1.7rem; } .seal-mark { width: 55px; height: 55px; margin-bottom: 1.25rem; } .seal-mark span { width: 22px; height: 4px; } .seal-mark span:nth-child(2) { width: 31px; } .seal-mark span:nth-child(3) { width: 16px; margin-left: 8px; } .login-intro h1 { font-size: clamp(2.45rem, 11vw, 4rem); } .intro-copy { margin: .75rem 0 1.25rem; font-size: 1rem; } .intro-notes { max-width: 29rem; } .intro-notes div { padding-top: .7rem; } .login-panel { padding: 2.5rem 1.5rem 3rem; } }
+@media (max-width: 390px) { .role-selector { grid-template-columns: 1fr; } .intro-notes { grid-template-columns: 1fr; gap: .35rem; } .intro-notes div { padding-top: .45rem; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 </style>

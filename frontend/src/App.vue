@@ -1,382 +1,223 @@
 <template>
-  <div class="app-container">
-    <!-- 左侧边栏 -->
-    <div class="sidebar">
-      <div class="logo">
-        <div class="logo-icon">🎨</div>
-        <h2>智能文创平台</h2>
+  <main class="workspace-shell">
+    <header class="workspace-header">
+      <a class="brand" href="/index.html" aria-label="智能文创平台，返回创作页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>智能文创平台</span>
+      </a>
+      <div class="account-summary">
+        <span class="account-name">{{ userInfo?.name || userInfo?.username || '已登录用户' }}</span>
+        <button type="button" class="text-button" @click="logout">退出登录</button>
       </div>
-      
-      <div class="nav-item" :class="{ active: activeTab === 'generate' }" @click="switchTab('generate')">
-        <div class="nav-icon">🚀</div>
-        <span class="nav-text">开启对话</span>
-      </div>
-      
-      <div class="nav-item" :class="{ active: activeTab === 'recommendations' }" @click="switchTab('recommendations')">
-        <div class="nav-icon">🔥</div>
-        <span class="nav-text">热门推荐</span>
-      </div>
-      
-      <div class="nav-item" :class="{ active: activeTab === 'history' }" @click="switchTab('history')">
-        <div class="nav-icon">📜</div>
-        <span class="nav-text">历史记录</span>
-      </div>
-      
-      <div class="nav-item" :class="{ active: activeTab === 'profile' }" @click="switchTab('profile')">
-        <div class="nav-icon">👤</div>
-        <span class="nav-text">用户信息</span>
-      </div>
-      
-      <div class="nav-item" :class="{ active: activeTab === 'password' }" @click="switchTab('password')">
-        <div class="nav-icon">🔒</div>
-        <span class="nav-text">密码修改</span>
-      </div>
-      
-      <div class="user-info">
-        <div class="user-avatar">
-          {{ getUserInitial() }}
-        </div>
-        <div class="user-name">{{ userInfo?.name || userInfo?.username }}</div>
-        <div class="user-type">{{ getUserTypeText(userInfo?.user_type) }}</div>
-        <button class="btn btn-outline-secondary btn-sm mt-3" @click="logout">
-          🚪 退出登录
-        </button>
-      </div>
+    </header>
+
+    <div class="workspace-layout">
+      <nav class="workspace-nav" aria-label="用户工作台导航">
+        <button type="button" :class="{ active: activeTab === 'generate' }" :aria-current="activeTab === 'generate' ? 'page' : undefined" @click="switchTab('generate')"><span>01</span>创作</button>
+        <button type="button" :class="{ active: activeTab === 'history' }" :aria-current="activeTab === 'history' ? 'page' : undefined" @click="switchTab('history')"><span>02</span>记录</button>
+        <button type="button" :class="{ active: activeTab === 'recommendations' }" :aria-current="activeTab === 'recommendations' ? 'page' : undefined" @click="switchTab('recommendations')"><span>03</span>灵感</button>
+        <button type="button" :class="{ active: activeTab === 'profile' }" :aria-current="activeTab === 'profile' ? 'page' : undefined" @click="switchTab('profile')"><span>04</span>账户</button>
+      </nav>
+
+      <section class="workspace-content">
+        <section v-if="activeTab === 'generate'" aria-labelledby="generate-title">
+          <div class="section-heading">
+            <p class="section-index">创作</p>
+            <h1 id="generate-title">把文化意象说清楚</h1>
+            <p>写下主题和用途，再选择画面方向，让创作从一个清晰的想法开始。</p>
+          </div>
+
+          <form class="creation-form" @submit.prevent="generateContent" novalidate>
+            <div class="field-block">
+              <label for="prompt">主题与需求</label>
+              <textarea id="prompt" v-model="prompt" rows="7" :disabled="loading" placeholder="例如：以青花瓷纹样为灵感，为博物馆文创书签构思图文内容。" aria-describedby="prompt-help"></textarea>
+              <p id="prompt-help" class="field-help">可写主题、使用场景、人物或想表达的文化意象。</p>
+            </div>
+
+            <fieldset class="field-block direction-fieldset" :disabled="loading">
+              <legend>画面方向</legend>
+              <p class="field-help">先选一组策展方案，也可以继续调整下面的画面维度。</p>
+              <div class="direction-grid" role="radiogroup" aria-label="画面方向策展方案">
+                <button v-for="direction in visualDirections" :key="direction.id" type="button" class="direction-card" :class="{ active: selectedDirectionId === direction.id }" :aria-pressed="selectedDirectionId === direction.id" @click="selectDirection(direction)">
+                  <span>{{ direction.name }}</span>
+                  <small>{{ direction.summary }}</small>
+                </button>
+              </div>
+
+              <div class="dimension-grid">
+                <label v-for="dimension in dimensionFields" :key="dimension.key" class="dimension-control">
+                  <span>{{ dimension.label }}</span>
+                  <select v-model="dimensions[dimension.key]" :aria-label="dimension.label" @change="handleDimensionChange">
+                    <option v-for="option in dimensionOptions[dimension.key]" :key="option.id" :value="option.id">{{ option.name }}</option>
+                  </select>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="field-block">
+              <label for="supplement">补充画面要求（可选）</label>
+              <input id="supplement" v-model="supplement" type="text" :maxlength="supplementMaxLength" :disabled="loading" placeholder="可补充材质、光线、镜头或不希望出现的元素" aria-describedby="supplement-help">
+              <p id="supplement-help" class="field-help">这项不会改写上面的主题内容。</p>
+            </div>
+
+            <details class="style-preview">
+              <summary>查看本次画面描述</summary>
+              <p>{{ currentStyle }}</p>
+            </details>
+
+            <p v-if="error" class="state-message error-state" role="alert">{{ error }}</p>
+            <p v-if="sessionExpired" class="state-message error-state" role="alert">登录状态已失效。<a href="/login.html">重新登录</a>后可继续提交当前内容。</p>
+
+            <div class="form-actions">
+              <button type="submit" class="primary-button" :disabled="loading">
+                <span v-if="loading" class="button-loading"><span class="inline-spinner" aria-hidden="true"></span>正在生成</span>
+                <span v-else>开始生成</span>
+              </button>
+              <button type="button" class="secondary-button" :disabled="loading" @click="clearAll">清空本页内容</button>
+            </div>
+          </form>
+
+          <section v-if="loading" class="generation-state" aria-live="polite">
+            <span class="large-spinner" aria-hidden="true"></span>
+            <div>
+              <h2>正在处理你的创作请求</h2>
+              <p>请保持页面开启，完成后会在这里显示结果。</p>
+            </div>
+          </section>
+
+          <section v-if="result && !loading" class="result-section" aria-labelledby="result-title">
+            <div class="result-header">
+              <p class="section-index">本次创作</p>
+              <h2 id="result-title">生成结果</h2>
+            </div>
+            <div class="result-grid">
+              <div class="image-stage">
+                <img v-if="!imageFailed" :src="result.image_url" :alt="result.title" @error="imageFailed = true">
+                <div v-else class="image-unavailable" role="status">
+                  <span aria-hidden="true"></span>
+                  <p>图片暂时无法加载</p>
+                  <small>你仍可以查看本次生成的文字内容。</small>
+                </div>
+                <div class="image-actions">
+                  <button type="button" class="secondary-button" :disabled="isDownloading" @click="downloadImage">{{ isDownloading ? '正在准备下载' : '下载图片' }}</button>
+                  <p v-if="downloadError" class="inline-error" role="alert">{{ downloadError }}</p>
+                </div>
+              </div>
+              <article class="generated-copy">
+                <h3>{{ result.title }}</h3>
+                <div class="content-copy">{{ result.content }}</div>
+                <dl class="result-meta">
+                  <div><dt>生成耗时</dt><dd>{{ result.generation_time }} 秒</dd></div>
+                  <div><dt>记录编号</dt><dd>{{ result.log_id }}</dd></div>
+                  <div><dt>画面描述</dt><dd>{{ resultStyle }}</dd></div>
+                </dl>
+                <div class="rating-panel">
+                  <p class="feedback-title">这次结果是否符合你的想法？</p>
+                  <div class="rating-buttons" aria-label="为本次生成评分">
+                    <button v-for="n in 5" :key="n" type="button" :class="{ selected: userRating === n }" :disabled="ratingSaving" :aria-pressed="userRating === n" @click="rateImage(n)">{{ n }} 分</button>
+                  </div>
+                  <p v-if="ratingSaving" class="status-copy" aria-live="polite">正在提交反馈。</p>
+                  <p v-else-if="ratingError" class="inline-error" role="alert">{{ ratingError }}</p>
+                  <p v-else-if="userRating" class="status-copy" aria-live="polite">已收到 {{ userRating }} 分反馈。</p>
+                </div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section v-else-if="activeTab === 'history'" aria-labelledby="history-title">
+          <div class="section-heading section-heading-row">
+            <div>
+              <p class="section-index">记录</p>
+              <h1 id="history-title">创作记录</h1>
+              <p>查看当前账户已经保存的创作结果。</p>
+            </div>
+            <button type="button" class="secondary-button" :disabled="loadingHistory" @click="loadHistory">{{ loadingHistory ? '正在刷新' : '刷新记录' }}</button>
+          </div>
+          <div v-if="loadingHistory" class="empty-state" aria-live="polite">正在读取创作记录。</div>
+          <div v-else-if="historyError" class="state-message error-state" role="alert">{{ historyError }}</div>
+          <div v-else-if="historyLoaded && history.length === 0" class="empty-state">
+            <h2>还没有创作记录</h2>
+            <p>从“创作”页写下一个主题，完成后结果会出现在这里。</p>
+            <button type="button" class="primary-button" @click="switchTab('generate')">去创作</button>
+          </div>
+          <div v-else-if="history.length" class="history-grid">
+            <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry">
+              <div class="history-visual">
+                <img v-if="record.image_url && !historyImageErrors[record.image_url]" :src="getImageUrl(record.image_url)" :alt="record.title || record.prompt" @error="markHistoryImageFailed(record.image_url)">
+                <div v-else class="history-image-fallback">图片无法加载</div>
+              </div>
+              <div>
+                <p class="record-style">{{ record.style || '未记录画面描述' }}</p>
+                <h2>{{ record.title || record.prompt }}</h2>
+                <p>{{ previewText(record.content || record.prompt, 110) }}</p>
+                <time>{{ formatDate(record.timestamp) }}</time>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section v-else-if="activeTab === 'recommendations'" aria-labelledby="recommendations-title">
+          <div class="section-heading section-heading-row">
+            <div>
+              <p class="section-index">灵感</p>
+              <h1 id="recommendations-title">创作参考</h1>
+              <p>这里会显示与你的记录相关的参考内容。</p>
+            </div>
+            <button type="button" class="secondary-button" :disabled="recommendationLoading" @click="loadRecommendations">{{ recommendationLoading ? '正在刷新' : '刷新参考' }}</button>
+          </div>
+          <div v-if="recommendationLoading" class="empty-state" aria-live="polite">正在读取参考内容。</div>
+          <div v-else-if="recommendationError" class="state-message error-state" role="alert">{{ recommendationError }}</div>
+          <div v-else-if="recommendationsLoaded && !trendingStyles.length && !trendingKeywords.length" class="empty-state">
+            <h2>暂时没有参考内容</h2>
+            <p>完成一些创作后，再回来看看新的参考。</p>
+          </div>
+          <div v-else-if="recommendationsLoaded" class="reference-grid">
+            <section v-if="trendingStyles.length" class="reference-list">
+              <h2>画面参考</h2>
+              <article v-for="item in trendingStyles" :key="item.style">
+                <h3>{{ item.style }}</h3>
+                <p v-if="item.reason">{{ item.reason }}</p>
+              </article>
+            </section>
+            <section v-if="trendingKeywords.length" class="reference-list">
+              <h2>主题关键词</h2>
+              <article v-for="item in trendingKeywords" :key="item.keyword">
+                <h3>{{ item.keyword }}</h3>
+                <p>在已有创作中出现 {{ item.frequency }} 次。</p>
+              </article>
+            </section>
+          </div>
+        </section>
+
+        <section v-else aria-labelledby="profile-title">
+          <div class="section-heading">
+            <p class="section-index">账户</p>
+            <h1 id="profile-title">账户资料</h1>
+            <p>以下信息来自当前登录账户。</p>
+          </div>
+          <dl class="profile-list">
+            <div><dt>用户名</dt><dd>{{ userInfo?.username || '—' }}</dd></div>
+            <div><dt>姓名</dt><dd>{{ userInfo?.name || '—' }}</dd></div>
+            <div><dt>用户编号</dt><dd>{{ userInfo?.user_id || '—' }}</dd></div>
+          </dl>
+        </section>
+      </section>
     </div>
-    
-    <!-- 右侧内容区 -->
-    <div class="main-content">
-      <div class="content-header" v-if="activeTab === 'generate'">
-        <h3>🚀 智能内容生成</h3>
-        <p class="mb-0">输入您的创意想法，AI将为您生成图文内容</p>
-      </div>
-      
-      <div class="content-header" v-else-if="activeTab === 'recommendations'">
-        <h3>🔥 热门推荐</h3>
-        <p class="mb-0">发现平台最受欢迎的风格和关键词</p>
-      </div>
-      
-      <div class="content-header" v-else-if="activeTab === 'history'">
-        <h3>📜 历史记录</h3>
-        <p class="mb-0">查看您的创作历史和成果</p>
-      </div>
-      
-      <div class="content-header" v-else-if="activeTab === 'profile'">
-        <h3>👤 用户信息</h3>
-        <p class="mb-0">管理您的个人资料和设置</p>
-      </div>
-      
-      <div class="content-header" v-else-if="activeTab === 'password'">
-        <h3>🔒 密码修改</h3>
-        <p class="mb-0">更新您的账户密码</p>
-      </div>
-      
-      <div class="content-body">
-        <!-- 内容生成 -->
-        <div v-if="activeTab === 'generate'">
-          <div class="row">
-            <div class="col-md-8">
-              <div class="input-group">
-                <label for="prompt">✨ 主题描述：</label>
-                <textarea id="prompt" v-model="prompt" 
-                          placeholder="详细描述您想要生成的内容，例如：夏日黄昏的海边，金色的阳光洒在波光粼粼的海面上..." 
-                          rows="4"></textarea>
-              </div>
-
-              <div class="input-group">
-                <label for="style">🎭 选择风格：</label>
-                <div class="style-section">
-                  <!-- 左侧：预设风格 -->
-                  <div class="style-presets">
-                    <div class="style-grid">
-                      <div v-for="styleOption in styleOptions" 
-                           :key="styleOption"
-                           class="style-option"
-                           :class="{ active: style === styleOption }"
-                           @click="selectStyle(styleOption)">
-                        {{ styleOption }}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <!-- 右侧：自定义风格 -->
-                  <div class="custom-style-side">
-                    <label>🎨 自定义风格：</label>
-                    <div class="custom-style-input">
-                      <input type="text" v-model="customStyle" 
-                             placeholder="输入任何您想要的风格描述..." 
-                             @input="useCustomStyle">
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="d-flex gap-2 mb-3">
-                <button class="btn btn-primary" @click="generateContent" :disabled="loading">
-                  <span v-if="loading">
-                    <span class="spinner-border spinner-border-sm me-2"></span>
-                    生成中...
-                  </span>
-                  <span v-else>🚀 开始生成</span>
-                </button>
-
-                <button class="btn btn-outline-secondary" @click="clearAll" :disabled="loading">
-                  🗑️ 清空
-                </button>
-              </div>
-
-              <div v-if="error" class="error">
-                ❌ {{ error }}
-              </div>
-            </div>
-            
-            <div class="col-md-4">
-              <div class="card">
-                <div class="card-body">
-                  <h5 class="card-title">💡 使用提示</h5>
-                  <ul class="list-unstyled mt-3">
-                    <li class="mb-2">✅ 描述越详细，生成效果越好</li>
-                    <li class="mb-2">✅ 可以指定艺术风格或氛围</li>
-                    <li class="mb-2">✅ 支持中英文混合描述</li>
-                    <li class="mb-2">✅ 生成时间约10-30秒</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 生成结果 -->
-          <div v-if="result && !loading" class="result mt-4">
-            <div class="image-container">
-              <h4>🖼️ 生成图片</h4>
-              <img :src="result.image_url" :alt="prompt" @error="handleImageError" class="mt-3">
-              
-              <!-- 图片操作区域 -->
-              <div class="image-actions mt-3">
-                <div class="rating-section mb-3">
-                  <label class="rating-label">💖 给这张图片评分：</label>
-                  <div class="star-rating">
-                    <span v-for="n in 5" 
-                          :key="n"
-                          class="star"
-                          :class="{ active: userRating >= n }"
-                          @click="rateImage(n)">
-                      ⭐
-                    </span>
-                  </div>
-                  <small class="text-muted ms-2">{{ userRating }}/5分</small>
-                </div>
-                
-                <button class="btn btn-primary w-100" @click="downloadImage">
-                  📥 下载图片
-                </button>
-              </div>
-            </div>
-            
-            <div class="content-container">
-              <h4>📝 生成内容</h4>
-              <div class="content-box title-box mt-3">
-                <strong>标题：</strong>{{ result.title }}
-              </div>
-              <div class="content-box">
-                <strong>正文：</strong><br>
-                {{ result.content }}
-              </div>
-              <div class="mt-3">
-                <small class="text-muted">⏱️ 生成时间: {{ result.generation_time }}秒</small>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 热门推荐 -->
-        <div v-if="activeTab === 'recommendations'">
-          <div v-if="recommendationLoading" class="loading">
-            <div class="loading-spinner"></div>
-            <p class="mt-3">正在加载推荐数据...</p>
-          </div>
-
-          <div v-else-if="recommendationError" class="error">
-            <p>❌ {{ recommendationError }}</p>
-            <button class="btn btn-outline-primary btn-sm" @click="loadRecommendations">
-              重新加载
-            </button>
-          </div>
-
-          <div v-else-if="recommendationsLoaded && trendingStyles.length === 0 && trendingKeywords.length === 0" class="empty-history">
-            <div class="icon">📭</div>
-            <h5 class="mb-3">暂无推荐数据</h5>
-            <button class="btn btn-outline-primary btn-sm" @click="loadRecommendations">
-              重新加载
-            </button>
-          </div>
-
-          <template v-else-if="recommendationsLoaded">
-          <div class="row mb-4" v-if="trendingStyles.length > 0">
-            <div class="col-12">
-              <h4>🎨 热门风格推荐</h4>
-              <div class="recommendation-grid">
-                <div class="recommendation-card" v-for="style in trendingStyles" :key="style.style">
-                  <div class="recommendation-icon">🎭</div>
-                  <div class="recommendation-title">{{ style.style }}</div>
-                  <div class="hot-score">推荐评分: {{ style.score }}</div>
-                  <div v-if="style.reason" class="recommendation-desc">{{ style.reason }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="row" v-if="trendingKeywords.length > 0">
-            <div class="col-12">
-              <h4>🔥 热门关键词</h4>
-              <div class="recommendation-grid">
-                <div class="recommendation-card" v-for="keyword in trendingKeywords" :key="keyword.keyword">
-                  <div class="recommendation-icon">🔑</div>
-                  <div class="recommendation-title">{{ keyword.keyword }}</div>
-                  <div class="recommendation-desc">出现频次: {{ keyword.frequency }}</div>
-                  <div class="hot-score">热度: {{ keyword.hot_score }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-          </template>
-        </div>
-        
-        <!-- 历史记录 -->
-        <div v-if="activeTab === 'history'">
-          <div class="d-flex justify-content-between align-items-center mb-4">
-            <h4>您的创作历史</h4>
-            <button class="btn btn-outline-secondary btn-sm" @click="loadHistory" :disabled="loadingHistory">
-              <span v-if="loadingHistory">
-                <span class="spinner-border spinner-border-sm me-1"></span>
-                加载中
-              </span>
-              <span v-else>🔄 刷新</span>
-            </button>
-          </div>
-
-          <!-- 修复：使用正确的属性名 historyLoading -> loadingHistory -->
-          <div v-if="loadingHistory" class="loading">
-            <div class="loading-spinner"></div>
-            <p class="mt-3">正在加载历史记录...</p>
-          </div>
-
-          <div v-if="historyError" class="error">
-            ❌ {{ historyError }}
-          </div>
-
-          <!-- 历史记录网格 -->
-          <div v-if="history.length > 0" class="history-grid">
-            <div v-for="(record, index) in history" :key="index" class="history-card">
-              <div class="history-image">
-                <img :src="getImageUrl(record.image_url)" :alt="record.prompt" 
-                     @error="handleHistoryImageError"
-                     @click="previewImage(record)">
-              </div>
-              <div class="history-content">
-                <h5>{{ record.title || record.prompt.substring(0, 40) + (record.prompt.length > 40 ? '...' : '') }}</h5>
-                <p class="history-prompt">
-                  {{ (record.content || record.prompt).substring(0, 80) }}{{ (record.content || record.prompt).length > 80 ? '...' : '' }}
-                </p>
-                <div class="history-meta">
-                  <span class="history-style">{{ record.style || '通用' }}</span>
-                  <span class="history-time">{{ formatDate(record.timestamp) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 空状态 -->
-          <div v-else-if="historyLoaded && history.length === 0" class="empty-history">
-            <div class="icon">📝</div>
-            <h5 class="mb-3">暂无生成记录</h5>
-            <p class="text-muted mb-4">
-              开始您的第一次创作，生成精彩内容吧！
-            </p>
-            <button class="btn btn-primary" @click="switchTab('generate')">
-              🎨 开始创作
-            </button>
-          </div>
-        </div>
-        
-        <!-- 用户信息 -->
-        <div v-if="activeTab === 'profile'">
-          <div class="row">
-            <div class="col-md-6">
-              <div class="card">
-                <div class="card-body">
-                  <h5 class="card-title">👤 个人信息</h5>
-                  <div class="mt-4">
-                    <div class="mb-3">
-                      <label class="form-label">用户名</label>
-                      <input type="text" class="form-control" :value="userInfo?.username" readonly>
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">姓名</label>
-                      <input type="text" class="form-control" :value="userInfo?.name" readonly>
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">用户ID</label>
-                      <input type="text" class="form-control" :value="userInfo?.user_id" readonly>
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">用户类型</label>
-                      <input type="text" class="form-control" :value="getUserTypeText(userInfo?.user_type)" readonly>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="card">
-                <div class="card-body">
-                  <h5 class="card-title">📊 创作统计</h5>
-                  <div class="mt-4 text-center">
-                    <div class="display-4 text-dark mb-2">{{ history.length }}</div>
-                    <p class="text-muted">总创作次数</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 密码修改 -->
-        <div v-if="activeTab === 'password'">
-          <div class="row justify-content-center">
-            <div class="col-md-6">
-              <div class="card">
-                <div class="card-body">
-                  <h5 class="card-title">🔒 修改密码</h5>
-                  <div class="mt-4">
-                    <div class="mb-3">
-                      <label class="form-label">当前密码</label>
-                      <input type="password" class="form-control" v-model="currentPassword">
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">新密码</label>
-                      <input type="password" class="form-control" v-model="newPassword">
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">确认新密码</label>
-                      <input type="password" class="form-control" v-model="confirmPassword">
-                    </div>
-                    <button class="btn btn-primary w-100" @click="changePassword">
-                      🔄 更新密码
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  </main>
 </template>
 
 <script>
-import axios from 'axios';
+import axios from 'axios'
+import {
+  buildStylePrompt,
+  DEFAULT_DIRECTION_ID,
+  DIMENSION_OPTIONS,
+  SUPPLEMENT_MAX_LENGTH,
+  VISUAL_DIRECTIONS,
+} from './content/visualDirections'
+
+const DEFAULT_DIRECTION = VISUAL_DIRECTIONS.find((direction) => direction.id === DEFAULT_DIRECTION_ID)
 
 export default {
   name: 'App',
@@ -384,895 +225,1055 @@ export default {
     return {
       activeTab: 'generate',
       prompt: '',
-      style: '',
-      customStyle: '',
+      dimensions: { ...DEFAULT_DIRECTION.dimensions },
+      selectedDirectionId: DEFAULT_DIRECTION_ID,
+      supplement: '',
       loading: false,
       error: '',
+      sessionExpired: false,
       result: null,
+      resultStyle: '',
       userInfo: null,
-      isGenerating: false,
+      imageFailed: false,
       isDownloading: false,
-
-      // 新增数据
-      styleOptions: [
-        "写实风格", "电影感", "鲜明色彩", "艺术感", 
-        "自然风格", "赛博朋克", "极简主义", "戏剧化",
-        "专业摄影", "水彩画风", "奇幻风格", "复古风"
-      ],
+      downloadError: '',
       userRating: 0,
-      
-      // 历史记录相关 - 修复：使用正确的属性名
+      ratingSaving: false,
+      ratingError: '',
       history: [],
-      loadingHistory: false,  // 修复：原来是 historyLoading
+      loadingHistory: false,
       historyError: '',
       historyLoaded: false,
-      
-      // 推荐相关
+      historyImageErrors: {},
       trendingStyles: [],
       trendingKeywords: [],
       recommendationLoading: false,
       recommendationError: '',
       recommendationsLoaded: false,
-      
-      // 密码修改
-      currentPassword: '',
-      newPassword: '',
-      confirmPassword: ''
+      visualDirections: VISUAL_DIRECTIONS,
+      dimensionOptions: DIMENSION_OPTIONS,
+      supplementMaxLength: SUPPLEMENT_MAX_LENGTH,
+      dimensionFields: [
+        { key: 'culturalContext', label: '文化语境' },
+        { key: 'medium', label: '表现媒介' },
+        { key: 'palette', label: '色彩倾向' },
+        { key: 'composition', label: '构图气质' },
+      ],
     }
+  },
+  computed: {
+    currentStyle() {
+      return buildStylePrompt(this.dimensions, this.supplement)
+    },
   },
   methods: {
     switchTab(tab) {
-      this.activeTab = tab;
-      if (tab === 'history') {
-        this.loadHistory();
-      } else if (tab === 'recommendations') {
-        this.loadRecommendations();
-      }
+      this.activeTab = tab
+      if (tab === 'history') this.loadHistory()
+      if (tab === 'recommendations') this.loadRecommendations()
     },
-    
-    async generateContent() {                   
-      if (this.isGenerating) return;
-
-      if (!this.prompt.trim()) {
-        this.error = '请输入主题描述';
-        return;
-      }
-
-      this.isGenerating = true;
-      this.loading = true;
-      this.error = '';
-      this.result = null;
-      this.userRating = 0; // 重置评分
-
-      const token = localStorage.getItem('token');
-      if (!token) {
-        this.error = '请先登录';
-        this.loading = false;
-        this.isGenerating = false;
-        return;
-      }
-
-      try {
-        const response = await axios.post('/api/generate', {
-          prompt: this.prompt,
-          style: this.style || '通用'
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (response.data.status === 'success') {
-          this.result = response.data;
-          // 生成成功后自动刷新历史记录
-          setTimeout(() => {
-            this.loadHistory();
-          }, 1000);
-        } else {
-          this.error = '生成失败：' + (response.data.message || '未知错误');
-        }
-      } catch (error) {
-        console.error('API调用错误:', error);
-        this.error = '请求失败：' + (error.response?.data?.message || error.message);
-      } finally {
-        this.loading = false;
-        this.isGenerating = false;
-      }
+    authHeaders() {
+      const token = localStorage.getItem('token')
+      return token ? { Authorization: `Bearer ${token}` } : null
     },
-    
-    // 新增方法
-    selectStyle(style) {
-      this.style = style;
-      this.customStyle = ''; // 清空自定义输入
-    },
-    
-    useCustomStyle() {
-      if (this.customStyle.trim()) {
-        this.style = this.customStyle;
+    requestError(error, subject) {
+      const status = error.response?.status
+      if (status === 401) {
+        this.sessionExpired = true
+        return '登录状态已失效。'
       }
+      if (status === 403) return `当前账户无权${subject}。`
+      if (status === 503) return `${subject}暂时不可用，请稍后重试。`
+      if (status === 502) return `${subject}服务暂时不可用，请稍后重试。`
+      if (status) return `${subject}未能完成，请稍后重试。`
+      if (error.request) return `无法连接${subject}，请检查网络后重试。`
+      return `${subject}返回异常，请稍后重试。`
     },
-    
-    rateImage(rating) {
-      this.userRating = rating;
-      // 可以在这里添加API调用保存评分
-      this.saveRating(rating);
+    selectDirection(direction) {
+      this.selectedDirectionId = direction.id
+      this.dimensions = { ...direction.dimensions }
     },
-    
-    async saveRating(rating) {
-      try {
-        const token = localStorage.getItem('token');
-        await axios.post('/api/rating', {
-          image_url: this.result.image_url,
-          prompt: this.prompt,
-          style: this.style,
-          rating: rating,
-          log_id: this.result.log_id
-        }, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        console.log('评分保存成功');
-      } catch (error) {
-        console.error('保存评分失败:', error);
-      }
+    handleDimensionChange() {
+      this.selectedDirectionId = null
     },
-    
-    async downloadImage() {
-      if (this.isDownloading) return;
-      this.isDownloading = true;
-
-      try {
-        const token = localStorage.getItem('token');
-        await axios.post('/api/download', {
-          image_url: this.result.image_url,
-          prompt: this.prompt,
-          style: this.style
-        }, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        // 创建下载链接
-        const link = document.createElement('a');
-        link.href = this.result.image_url;
-        link.download = `ai-generated-${Date.now()}.jpg`;
-        link.click();
-        
-        console.log('下载记录成功');
-      } catch (error) {
-        console.error('下载失败:', error);
-        alert('下载失败，请重试');
-      } finally {
-        this.isDownloading = false;
-      }
-    },
-    
-    async loadHistory() {
-      this.loadingHistory = true;
-      this.historyError = '';
-      
-      const token = localStorage.getItem('token');
-      if (!token) {
-        this.historyError = '请先登录';
-        this.loadingHistory = false;
-        return;
-      }
-
-      try {
-        const response = await axios.get('/api/user/history', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (response.data.status === 'success') {
-          this.history = response.data.data;
-          this.historyLoaded = true;
-        } else {
-          this.historyError = '加载历史记录失败：' + (response.data.message || '未知错误');
-        }
-      } catch (error) {
-        console.error('加载历史记录错误:', error);
-        this.historyError = '请求失败：' + (error.response?.data?.message || error.message);
-      } finally {
-        this.loadingHistory = false;
-      }
-    },
-    
-    async loadRecommendations() {
-      if (this.recommendationLoading) return;
-      this.recommendationLoading = true;
-      this.recommendationError = '';
-      this.recommendationsLoaded = false;
-      this.trendingStyles = [];
-      this.trendingKeywords = [];
-
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) {
-          this.recommendationError = '登录状态已失效，请重新登录';
-          return;
-        }
-
-        const response = await axios.get('/api/recommendations/personalized', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        const data = response.data?.data;
-        if (response.data?.status !== 'success' || !data ||
-            !Array.isArray(data.style_recommendations) || !Array.isArray(data.hot_keywords)) {
-          this.recommendationError = '推荐服务返回的数据格式异常，请稍后重试';
-          return;
-        }
-
-        const stylesValid = data.style_recommendations.every(style =>
-          style &&
-          typeof style.style === 'string' && style.style.trim().length > 0 &&
-          typeof style.score === 'number' && Number.isFinite(style.score) &&
-          (style.reason == null || typeof style.reason === 'string')
-        );
-        const keywordsValid = data.hot_keywords.every(keyword =>
-          keyword &&
-          typeof keyword.keyword === 'string' && keyword.keyword.trim().length > 0 &&
-          typeof keyword.frequency === 'number' && Number.isFinite(keyword.frequency) &&
-          typeof keyword.hot_score === 'number' && Number.isFinite(keyword.hot_score)
-        );
-        if (!stylesValid || !keywordsValid) {
-          this.recommendationError = '推荐服务返回的数据格式异常，请稍后重试';
-          return;
-        }
-
-        this.trendingStyles = data.style_recommendations;
-        this.trendingKeywords = data.hot_keywords;
-        this.recommendationsLoaded = true;
-      } catch (error) {
-        const status = error.response?.status;
-        if (status === 401) {
-          this.recommendationError = '登录状态已失效，请重新登录';
-        } else if (status === 403) {
-          this.recommendationError = '当前账户无权查看推荐数据';
-        } else if (status === 503) {
-          this.recommendationError = '推荐服务暂不可用，请稍后重试';
-        } else {
-          this.recommendationError = '推荐数据加载失败，请检查网络后重试';
-        }
-      } finally {
-        this.recommendationLoading = false;
-      }
-    },
-
-    // 修改 getImageUrl 方法
-getImageUrl(imageUrl) {
-  if (!imageUrl) {
-    return '/images/default-image.png'; // 使用本地默认图片
-  }
-  
-  console.log('原始图片路径:', imageUrl);
-  
-  // 情况1：处理数据库中的绝对路径
-  if (imageUrl.startsWith('/home/mywork/smart-cultural-platform/static/')) {
-    // 转换为相对路径，让Vite代理处理
-    const relativePath = imageUrl.replace('/home/mywork/smart-cultural-platform', '');
-    return relativePath; // 直接返回相对路径
-  }
-  
-  // 情况2：处理相对路径（让Vite代理转发）
-  if (imageUrl.startsWith('/static/') || imageUrl.startsWith('/images/')) {
-    return imageUrl; // 直接返回，Vite会代理到localhost:5000
-  }
-  
-  // 情况3：如果已经是完整URL，直接返回
-  if (imageUrl.startsWith('http')) {
-    return imageUrl;
-  }
-  
-  // 情况4：处理其他相对路径
-  if (imageUrl.startsWith('./') || !imageUrl.startsWith('/')) {
-    return '/static/images/' + imageUrl;
-  }
-  
-  // 默认情况：使用本地默认图片
-  return '/images/default-image.png';
-},
-                
-    async changePassword() {
-      // 密码修改逻辑
-      alert('密码修改功能待实现');
-    },
-    
     clearAll() {
-      this.prompt = '';
-      this.style = '';
-      this.customStyle = '';
-      this.result = null;
-      this.error = '';
-      this.userRating = 0;
+      this.prompt = ''
+      this.dimensions = { ...DEFAULT_DIRECTION.dimensions }
+      this.selectedDirectionId = DEFAULT_DIRECTION_ID
+      this.supplement = ''
+      this.error = ''
+      this.sessionExpired = false
+      this.result = null
+      this.resultStyle = ''
+      this.imageFailed = false
+      this.downloadError = ''
+      this.userRating = 0
+      this.ratingError = ''
     },
-    
-    handleImageError(event) {
-      event.target.src = 'https://via.placeholder.com/512x512/333333/white?text=图片加载失败';
+    validGeneration(body) {
+      return body?.status === 'success'
+        && typeof body.image_url === 'string'
+        && body.image_url
+        && typeof body.title === 'string'
+        && body.title
+        && typeof body.content === 'string'
+        && body.content
+        && Number.isFinite(Number(body.generation_time))
+        && body.log_id !== undefined
+        && body.log_id !== null
     },
-    
-    handleHistoryImageError(event) {
-      const img = event.target;
-      console.log('图片加载失败，使用默认图片');
-      img.src = 'https://via.placeholder.com/350x200/333333/white?text=图片加载失败';
-    },
-    
-    previewImage(record) {
-      window.open(this.getImageUrl(record.image_url), '_blank');
-    },
-    
-    formatDate(timestamp) {
-      if (!timestamp) return '未知时间';
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (diffDays === 0) {
-        return '今天 ' + date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
-      } else if (diffDays === 1) {
-        return '昨天 ' + date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
-      } else if (diffDays < 7) {
-        return `${diffDays}天前`;
-      } else {
-        return date.toLocaleDateString('zh-CN');
+    async generateContent() {
+      if (this.loading) return
+      if (!this.prompt.trim()) {
+        this.error = '请先填写主题与需求。'
+        return
+      }
+      const headers = this.authHeaders()
+      if (!headers) {
+        window.location.href = '/login.html'
+        return
+      }
+
+      const style = this.currentStyle
+      this.loading = true
+      this.error = ''
+      this.sessionExpired = false
+      this.result = null
+      this.resultStyle = ''
+      this.imageFailed = false
+      this.downloadError = ''
+      this.userRating = 0
+      this.ratingError = ''
+
+      try {
+        const response = await axios.post('/api/generate', { prompt: this.prompt.trim(), style }, { headers })
+        if (!this.validGeneration(response.data)) {
+          this.error = '生成结果不完整，请稍后重试。'
+          return
+        }
+        this.result = response.data
+        this.resultStyle = style
+        this.loadHistory()
+      } catch (error) {
+        const message = this.requestError(error, '生成')
+        this.error = this.sessionExpired ? '' : message
+      } finally {
+        this.loading = false
       }
     },
-    
-    getUserTypeText(userType) {
-      const typeMap = {
-        'real_user': '真实用户',
-        'simulation_user': '模拟用户', 
-        'new_user': '新用户'
-      };
-      return typeMap[userType] || userType;
+    async rateImage(rating) {
+      if (!this.result || this.ratingSaving) return
+      const headers = this.authHeaders()
+      if (!headers) {
+        this.sessionExpired = true
+        return
+      }
+      this.ratingSaving = true
+      this.ratingError = ''
+      try {
+        const response = await axios.post('/api/rating', {
+          image_url: this.result.image_url,
+          prompt: this.prompt,
+          style: this.resultStyle,
+          rating,
+          log_id: this.result.log_id,
+        }, { headers })
+        if (response.data?.status !== 'success' || Number(response.data.rating) !== rating) {
+          this.ratingError = '反馈暂未保存，请稍后重试。'
+          return
+        }
+        this.userRating = rating
+      } catch (error) {
+        this.ratingError = this.requestError(error, '反馈')
+      } finally {
+        this.ratingSaving = false
+      }
     },
-    
-    getUserInitial() {
-      if (!this.userInfo?.name) return 'U';
-      return this.userInfo.name.charAt(0).toUpperCase();
+    async downloadImage() {
+      if (!this.result || this.isDownloading) return
+      const headers = this.authHeaders()
+      if (!headers) {
+        this.sessionExpired = true
+        return
+      }
+      this.isDownloading = true
+      this.downloadError = ''
+      try {
+        const response = await axios.post('/api/download', {
+          image_url: this.result.image_url,
+          prompt: this.prompt,
+          style: this.resultStyle,
+        }, { headers })
+        if (response.data?.status !== 'success') {
+          this.downloadError = '暂时无法下载，请稍后重试。'
+          return
+        }
+        const link = document.createElement('a')
+        link.href = this.result.image_url
+        link.download = `cultural-generation-${this.result.log_id}`
+        link.rel = 'noopener'
+        link.click()
+      } catch (error) {
+        this.downloadError = this.requestError(error, '下载')
+      } finally {
+        this.isDownloading = false
+      }
     },
-    
-    logout() {
-      localStorage.removeItem('token');
-      localStorage.removeItem('userInfo');
-      window.location.href = '/login.html';
+    async loadHistory() {
+      if (this.loadingHistory) return
+      const headers = this.authHeaders()
+      if (!headers) {
+        this.sessionExpired = true
+        return
+      }
+      this.loadingHistory = true
+      this.historyError = ''
+      try {
+        const response = await axios.get('/api/user/history', { headers })
+        if (response.data?.status !== 'success' || !Array.isArray(response.data.data)) {
+          this.historyError = '创作记录暂时无法读取，请稍后重试。'
+          return
+        }
+        this.history = response.data.data
+        this.historyLoaded = true
+      } catch (error) {
+        this.historyError = this.requestError(error, '创作记录')
+      } finally {
+        this.loadingHistory = false
+      }
     },
-    
+    async loadRecommendations() {
+      if (this.recommendationLoading) return
+      const headers = this.authHeaders()
+      if (!headers) {
+        this.sessionExpired = true
+        return
+      }
+      this.recommendationLoading = true
+      this.recommendationError = ''
+      this.recommendationsLoaded = false
+      this.trendingStyles = []
+      this.trendingKeywords = []
+      try {
+        const response = await axios.get('/api/recommendations/personalized', { headers })
+        const data = response.data?.data
+        const validStyles = Array.isArray(data?.style_recommendations)
+          && data.style_recommendations.every((item) => item && typeof item.style === 'string')
+        const validKeywords = Array.isArray(data?.hot_keywords)
+          && data.hot_keywords.every((item) => item && typeof item.keyword === 'string' && Number.isFinite(Number(item.frequency)))
+        if (response.data?.status !== 'success' || !validStyles || !validKeywords) {
+          this.recommendationError = '参考内容暂时无法读取，请稍后重试。'
+          return
+        }
+        this.trendingStyles = data.style_recommendations
+        this.trendingKeywords = data.hot_keywords
+        this.recommendationsLoaded = true
+      } catch (error) {
+        this.recommendationError = this.requestError(error, '参考内容')
+      } finally {
+        this.recommendationLoading = false
+      }
+    },
     loadUserProfile() {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-      
-      axios.get('/api/user/profile', {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      const headers = this.authHeaders()
+      if (!headers) return
+      axios.get('/api/user/profile', { headers }).then((response) => {
+        if (response.data?.status === 'success' && response.data.user && typeof response.data.user === 'object') {
+          this.userInfo = response.data.user
+          localStorage.setItem('userInfo', JSON.stringify(this.userInfo))
         }
-      })
-      .then(response => {
-        if (response.data.status === 'success') {
-          this.userInfo = response.data.user;
-          localStorage.setItem('userInfo', JSON.stringify(this.userInfo));
-        }
-      })
-      .catch(error => {
-        console.error('加载用户信息失败:', error);
-      });
-    }
+      }).catch(() => {})
+    },
+    getImageUrl(imageUrl) {
+      return imageUrl || ''
+    },
+    markHistoryImageFailed(imageUrl) {
+      this.historyImageErrors = { ...this.historyImageErrors, [imageUrl]: true }
+    },
+    previewText(value, limit) {
+      const text = String(value || '')
+      return text.length > limit ? `${text.slice(0, limit)}…` : text
+    },
+    formatDate(timestamp) {
+      if (!timestamp) return '时间未记录'
+      const date = new Date(timestamp)
+      return Number.isNaN(date.getTime()) ? '时间格式异常' : date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
+    },
+    logout() {
+      localStorage.removeItem('token')
+      localStorage.removeItem('userInfo')
+      localStorage.removeItem('adminToken')
+      localStorage.removeItem('adminUser')
+      window.location.href = '/login.html'
+    },
   },
-  
   mounted() {
-    // 检查登录状态
-    const userInfo = localStorage.getItem('userInfo');
-    const token = localStorage.getItem('token');
-    
-    if (!userInfo || !token) {
-      alert('请先登录');
-      window.location.href = '/login.html';
-      return;
+    const token = localStorage.getItem('token')
+    const userInfo = localStorage.getItem('userInfo')
+    if (!token || !userInfo) {
+      window.location.href = '/login.html'
+      return
     }
-    
-    // 解析用户信息
-    this.userInfo = JSON.parse(userInfo);
-    console.log('当前用户:', this.userInfo);
-    
-    // 加载用户完整信息
-    this.loadUserProfile();
-    
-    // 加载初始数据（不会自动生成图片）
-    this.loadHistory();
-    this.loadRecommendations();
-    
-    console.log('智能文创平台用户端加载完成');
-  }
+    try {
+      this.userInfo = JSON.parse(userInfo)
+    } catch {
+      window.location.href = '/login.html'
+      return
+    }
+    this.loadUserProfile()
+    this.loadHistory()
+  },
 }
 </script>
 
 <style>
-/* 原有的所有CSS样式完全保持不变 */
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { 
-  font-family: 'Microsoft YaHei', sans-serif; 
-  background: #f5f5f5;
-  min-height: 100vh;
-  overflow-x: hidden;
+:root {
+  color: #17221f;
+  background: #f5f2ea;
+  font-family: "Noto Serif CJK SC", "Songti SC", "STSong", serif;
 }
-
-.app-container {
-  display: flex;
-  min-height: 100vh;
+* {
+  box-sizing: border-box;
 }
-
-/* 左侧边栏 */
-.sidebar {
-  width: 280px;
-  background: #ffffff;
-  box-shadow: 2px 0 10px rgba(0,0,0,0.05);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-}
-
-.logo {
-  text-align: center;
-  padding: 20px 0;
-  margin-bottom: 30px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.logo h2 {
-  color: #333333;
-  font-weight: bold;
+body {
   margin: 0;
+  min-width: 320px;
+  background: #f5f2ea;
 }
-
-.logo-icon {
-  font-size: 2em;
-  margin-bottom: 10px;
+button, input, select, textarea {
+  font: inherit;
 }
-
-.nav-item {
-  background: #f8f8f8;
-  border-radius: 8px;
-  padding: 15px 20px;
-  margin-bottom: 15px;
-  border: 1px solid #e0e0e0;
-  transition: all 0.3s ease;
-  cursor: pointer;
+.workspace-shell {
+  min-height: 100vh;
+  background: #f5f2ea;
 }
-
-.nav-item:hover {
-  background: #e8e8e8;
-}
-
-.nav-item.active {
-  background: #333333;
-  color: white;
-}
-
-.nav-icon {
-  font-size: 1.3em;
-  margin-right: 10px;
-}
-
-.nav-text {
-  font-weight: 600;
-  font-size: 1.1em;
-}
-
-.user-info {
-  margin-top: auto;
-  background: #f8f8f8;
-  border-radius: 8px;
-  padding: 15px;
-  text-align: center;
-  border: 1px solid #e0e0e0;
-}
-
-.user-avatar {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: #333333;
-  color: white;
+.workspace-header {
+  min-height: 76px;
+  padding: 0 clamp(1rem, 4vw, 4rem);
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 1.5em;
-  margin: 0 auto 10px;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #c9c3b6;
+  background: #f9f7f0;
 }
-
-.user-name {
-  font-weight: bold;
-  color: #333333;
-  margin-bottom: 5px;
-}
-
-.user-type {
-  background: #555555;
-  color: white;
-  padding: 2px 10px;
-  border-radius: 15px;
-  font-size: 0.8em;
-  display: inline-block;
-}
-
-/* 右侧内容区 */
-.main-content {
-  flex: 1;
-  background: #ffffff;
-  margin: 20px;
-  border-radius: 12px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-  overflow: hidden;
-}
-
-.content-header {
-  background: #333333;
-  color: white;
-  padding: 25px 30px;
-}
-
-.content-body {
-  padding: 30px;
-  min-height: 500px;
-}
-
-/* 内容生成样式 */
-.input-group { 
-  margin-bottom: 25px; 
-}
-
-label { 
-  display: block; 
-  margin-bottom: 8px; 
-  font-weight: bold; 
-  color: #333333; 
-  font-size: 1.1em; 
-}
-
-input, select, textarea { 
-  width: 100%; 
-  padding: 12px; 
-  margin-bottom: 15px; 
-  border: 1px solid #d0d0d0; 
-  border-radius: 6px; 
-  font-size: 16px; 
-  transition: border-color 0.3s; 
-  background: #f8f8f8;
-}
-
-input:focus, select:focus, textarea:focus { 
-  outline: none; 
-  border-color: #666666; 
-  background: #ffffff;
-}
-
-.btn-primary {
-  padding: 12px 30px;
-  background: #333333;
-  border: none;
-  border-radius: 6px;
-  font-weight: bold;
-  transition: all 0.2s;
-}
-
-.btn-primary:hover {
-  background: #444444;
-}
-
-.btn-outline-secondary {
-  padding: 12px 25px;
-  border: 1px solid #666666;
-  color: #666666;
-  background: transparent;
-  border-radius: 6px;
-  font-weight: bold;
-}
-
-.result { 
-  display: flex; 
-  gap: 30px; 
-  margin-top: 40px; 
-  animation: fadeIn 0.5s ease-in; 
-}
-
-.image-container, .content-container { 
-  flex: 1; 
-}
-
-.image-container img { 
-  width: 100%; 
-  max-width: 512px; 
-  border-radius: 6px; 
-  box-shadow: 0 3px 10px rgba(0,0,0,0.1); 
-}
-
-.content-box { 
-  background: #f8f8f8; 
-  padding: 20px; 
-  margin-bottom: 15px; 
-  border-radius: 6px; 
-  border-left: 3px solid #666666; 
-}
-
-.title-box { 
-  background: #e8e8e8; 
-  border-left-color: #333333; 
-  font-size: 1.2em; 
-  font-weight: bold; 
-}
-
-.loading { 
-  text-align: center; 
-  padding: 40px; 
-}
-
-.loading-spinner { 
-  border: 4px solid #e0e0e0; 
-  border-top: 4px solid #333333; 
-  border-radius: 50%; 
-  width: 40px; 
-  height: 40px; 
-  animation: spin 1s linear infinite; 
-  margin: 0 auto 20px; 
-}
-
-.error { 
-  background: #f8f8f8; 
-  color: #c62828; 
-  padding: 15px; 
-  border-radius: 6px; 
-  margin-top: 15px; 
-  border-left: 3px solid #c62828; 
-}
-
-/* 风格选择网格 */
-.style-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.style-option {
-  background: #f8f8f8;
-  border: 1px solid #d0d0d0;
-  border-radius: 6px;
-  padding: 12px 8px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  font-size: 0.9em;
-  font-weight: 500;
-}
-
-.style-option:hover {
-  background: #e8e8e8;
-}
-
-.style-option.active {
-  background: #333333;
-  color: white;
-  border-color: #333333;
-}
-
-/* 自定义风格输入框 */
-.style-section {
-  display: flex;
-  gap: 30px;
-  align-items: flex-start;
-}
-
-.style-presets {
-  flex: 1;
-}
-
-.custom-style-side {
-  flex: 1;
-  margin-top: 0;
-}
-
-.custom-style-side .custom-style-input {
-  margin-top: 10px;
-}
-
-/* 评分样式 */
-.rating-section {
-  text-align: center;
-}
-
-.rating-label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: bold;
-  color: #333333;
-}
-
-.star-rating {
+.brand {
   display: inline-flex;
-  gap: 5px;
+  align-items: center;
+  gap: .8rem;
+  color: #17221f;
+  text-decoration: none;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: .04em;
 }
-
-.star {
-  font-size: 1.5em;
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  border: 1px solid #245244;
+}
+.brand-mark i {
+  display: block;
+  width: 15px;
+  height: 3px;
+  background: #245244;
+}
+.brand-mark i:nth-child(2) {
+  width: 22px;
+  background: #a44536;
+}
+.brand-mark i:nth-child(3) {
+  width: 10px;
+  margin-left: 5px;
+}
+.account-summary {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  color: #4f5a52;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .86rem;
+}
+.account-name {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.text-button, .workspace-nav button, .direction-card, .primary-button, .secondary-button, .rating-buttons button {
+  border-radius: 0;
   cursor: pointer;
-  transition: all 0.2s ease;
-  opacity: 0.6;
 }
-
-.star:hover {
-  transform: scale(1.2);
-  opacity: 1;
+.text-button {
+  padding: .45rem 0;
+  color: #245244;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
 }
-
-.star.active {
-  opacity: 1;
-  color: #333333;
-  transform: scale(1.1);
+.workspace-layout {
+  width: min(100%, 1440px);
+  min-height: calc(100vh - 76px);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
 }
-
-/* 图片操作区域 */
+.workspace-nav {
+  padding: 2rem 1.1rem;
+  border-right: 1px solid #d4cec2;
+  background: #ece8dd;
+}
+.workspace-nav button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  padding: .85rem .7rem;
+  color: #465046;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #d1ccbf;
+  text-align: left;
+  font-size: 1rem;
+  transition: color .18s ease, background-color .18s ease;
+}
+.workspace-nav button span {
+  color: #8a9389;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .68rem;
+  letter-spacing: .08em;
+}
+.workspace-nav button:hover, .workspace-nav button.active {
+  color: #fffdf5;
+  background: #245244;
+}
+.workspace-nav button:hover span, .workspace-nav button.active span {
+  color: #d8ebe2;
+}
+.workspace-content {
+  min-width: 0;
+  padding: clamp(1.5rem, 4vw, 4.5rem);
+}
+.section-heading {
+  max-width: 50rem;
+  margin-bottom: 2.25rem;
+}
+.section-heading-row {
+  max-width: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.section-index, .record-style {
+  margin: 0 0 .75rem;
+  color: #245244;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .15em;
+}
+.section-heading h1, .result-header h2 {
+  margin: 0;
+  color: #17221f;
+  font-size: clamp(2.15rem, 4vw, 4.2rem);
+  line-height: 1.15;
+  letter-spacing: .03em;
+}
+.section-heading > p:last-child {
+  margin: 1rem 0 0;
+  color: #566057;
+  line-height: 1.8;
+}
+.creation-form {
+  max-width: 62rem;
+  padding-top: 2rem;
+  border-top: 2px solid #17221f;
+}
+.field-block {
+  margin: 0 0 1.7rem;
+  padding: 0;
+  border: 0;
+}
+.field-block > label, .field-block legend {
+  display: block;
+  margin-bottom: .65rem;
+  color: #27332c;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .95rem;
+  font-weight: 700;
+}
+textarea, input, select {
+  width: 100%;
+  padding: .9rem 1rem;
+  color: #17221f;
+  background: #fbfaf5;
+  border: 1px solid #aeb1a5;
+  border-radius: 0;
+  outline: none;
+  line-height: 1.65;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+textarea {
+  min-height: 168px;
+  resize: vertical;
+}
+textarea::placeholder, input::placeholder {
+  color: #778076;
+}
+textarea:focus, input:focus, select:focus {
+  border-color: #245244;
+  box-shadow: inset 0 -2px 0 #245244;
+}
+.field-help {
+  margin: .5rem 0 0;
+  color: #687169;
+  font-size: .86rem;
+  line-height: 1.6;
+}
+.direction-fieldset {
+  padding: 1.3rem;
+  border: 1px solid #c9c3b6;
+  background: #f9f7f0;
+}
+.direction-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
+  margin: 1rem 0 1.35rem;
+}
+.direction-card {
+  min-height: 116px;
+  padding: .9rem;
+  color: #344039;
+  background: #f6f3eb;
+  border: 1px solid #bfc0b4;
+  text-align: left;
+  transition: color .18s ease, border-color .18s ease, background-color .18s ease;
+}
+.direction-card span {
+  display: block;
+  margin-bottom: .45rem;
+  font-weight: 700;
+}
+.direction-card small {
+  display: block;
+  color: inherit;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .76rem;
+  line-height: 1.55;
+}
+.direction-card:hover, .direction-card.active {
+  color: #fffdf5;
+  border-color: #245244;
+  background: #245244;
+}
+.dimension-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.dimension-control {
+  display: grid;
+  gap: .5rem;
+  color: #27332c;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .86rem;
+  font-weight: 700;
+}
+.dimension-control select {
+  min-height: 46px;
+  padding-right: 2rem;
+  font-weight: 400;
+}
+.style-preview {
+  margin: -.2rem 0 1.5rem;
+  padding: .8rem 1rem;
+  color: #4e5951;
+  border-left: 3px solid #245244;
+  background: #ece8dd;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .86rem;
+  line-height: 1.65;
+}
+.style-preview summary {
+  cursor: pointer;
+  color: #245244;
+  font-weight: 700;
+}
+.style-preview p {
+  margin: .65rem 0 0;
+  overflow-wrap: anywhere;
+}
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-top: 1.5rem;
+}
+.primary-button, .secondary-button {
+  min-height: 48px;
+  padding: .75rem 1.1rem;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-weight: 700;
+  transition: background-color .18s ease, color .18s ease, border-color .18s ease;
+}
+.primary-button {
+  color: #fffdf5;
+  background: #17221f;
+  border: 1px solid #17221f;
+}
+.primary-button:hover:not(:disabled) {
+  background: #245244;
+  border-color: #245244;
+}
+.secondary-button {
+  color: #245244;
+  background: transparent;
+  border: 1px solid #245244;
+}
+.secondary-button:hover:not(:disabled) {
+  color: #fffdf5;
+  background: #245244;
+}
+.primary-button:disabled, .secondary-button:disabled {
+  opacity: .62;
+  cursor: wait;
+}
+.button-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+}
+.inline-spinner, .large-spinner {
+  display: inline-block;
+  border: 2px solid rgba(255, 255, 255, .45);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+.inline-spinner {
+  width: 1rem;
+  height: 1rem;
+  color: #fff;
+}
+.state-message {
+  max-width: 48rem;
+  margin: 1rem 0;
+  padding: .9rem 1rem;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.65;
+}
+.error-state {
+  color: #7d241d;
+  background: #f6e6df;
+  border-left: 4px solid #a44536;
+}
+.error-state a {
+  color: inherit;
+  font-weight: 700;
+}
+.generation-state {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  max-width: 62rem;
+  margin-top: 2.5rem;
+  padding: 2rem 0;
+  border-top: 1px solid #c9c3b6;
+  border-bottom: 1px solid #c9c3b6;
+}
+.generation-state h2 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+.generation-state p {
+  margin: .5rem 0 0;
+  color: #5a645c;
+  line-height: 1.6;
+}
+.large-spinner {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  color: #245244;
+  border-color: #b4c3ba;
+  border-top-color: #245244;
+}
+.result-section {
+  max-width: 70rem;
+  margin-top: 3rem;
+  padding-top: 2.2rem;
+  border-top: 2px solid #17221f;
+}
+.result-header {
+  margin-bottom: 1.5rem;
+}
+.result-header h2 {
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+}
+.result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  border: 1px solid #c9c3b6;
+  background: #fbfaf5;
+}
+.image-stage {
+  min-width: 0;
+  padding: 1rem;
+  border-right: 1px solid #c9c3b6;
+  background: #e9e5d9;
+}
+.image-stage > img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: #d9d7cc;
+}
+.image-unavailable {
+  display: grid;
+  place-content: center;
+  min-height: 320px;
+  padding: 2rem;
+  color: #465046;
+  text-align: center;
+  border: 1px dashed #7c877c;
+  background: repeating-linear-gradient(45deg, transparent, transparent 12px, rgba(36, 82, 68, .04) 12px, rgba(36, 82, 68, .04) 24px);
+}
+.image-unavailable span {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1rem;
+  border: 1px solid #a44536;
+  position: relative;
+}
+.image-unavailable span::after {
+  content: "";
+  position: absolute;
+  top: 30px;
+  left: -7px;
+  width: 76px;
+  height: 1px;
+  background: #a44536;
+  transform: rotate(-45deg);
+}
+.image-unavailable p {
+  margin: 0;
+  font-weight: 700;
+}
+.image-unavailable small {
+  margin-top: .5rem;
+  color: #687169;
+}
 .image-actions {
-  border-top: 1px solid #e0e0e0;
-  padding-top: 15px;
+  margin-top: .85rem;
 }
-
-/* 历史记录样式 */
+.inline-error {
+  margin: .65rem 0 0;
+  color: #8a2d23;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .86rem;
+  line-height: 1.5;
+}
+.generated-copy {
+  min-width: 0;
+  padding: clamp(1.35rem, 3vw, 3rem);
+}
+.generated-copy h3 {
+  margin: 0 0 1.6rem;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.6rem, 2.7vw, 2.5rem);
+  line-height: 1.35;
+}
+.content-copy {
+  color: #354038;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.result-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+  padding: 1rem 0;
+  border-top: 1px solid #d4cec2;
+  border-bottom: 1px solid #d4cec2;
+}
+.result-meta dt, .profile-list dt {
+  color: #687169;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .76rem;
+}
+.result-meta dd {
+  margin: .35rem 0 0;
+  overflow-wrap: anywhere;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-weight: 700;
+}
+.rating-panel {
+  padding-top: .25rem;
+}
+.feedback-title {
+  margin: 0 0 .75rem;
+  color: #27332c;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-weight: 700;
+}
+.rating-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+.rating-buttons button {
+  min-width: 52px;
+  min-height: 42px;
+  color: #245244;
+  background: transparent;
+  border: 1px solid #245244;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+.rating-buttons button:hover:not(:disabled), .rating-buttons button.selected {
+  color: #fffdf5;
+  background: #245244;
+}
+.status-copy {
+  margin: .7rem 0 0;
+  color: #4a5b50;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .86rem;
+}
+.empty-state {
+  margin-top: 1.5rem;
+  padding: 3rem 1.5rem;
+  color: #566057;
+  border-top: 2px solid #17221f;
+  border-bottom: 1px solid #c9c3b6;
+  text-align: center;
+  line-height: 1.7;
+}
+.empty-state h2 {
+  margin: 0;
+  color: #17221f;
+  font-size: 1.6rem;
+}
+.empty-state p {
+  margin: .7rem auto 1.25rem;
+  max-width: 30rem;
+}
 .history-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-  gap: 25px;
-  margin-top: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border-top: 2px solid #17221f;
+  background: #c9c3b6;
 }
-
-.history-card {
-  background: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.05);
-  overflow: hidden;
-  transition: all 0.3s ease;
-  border: 1px solid #e8e8e8;
+.history-entry {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+  padding: 1rem;
+  background: #fbfaf5;
 }
-
-.history-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+.history-visual {
+  min-width: 0;
+  aspect-ratio: 1;
+  background: #e9e5d9;
 }
-
-.history-image {
-  height: 200px;
-  overflow: hidden;
-}
-
-.history-image img {
+.history-visual img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.3s ease;
 }
-
-.history-card:hover .history-image img {
-  transform: scale(1.05);
-}
-
-.history-content {
-  padding: 20px;
-}
-
-.history-content h5 {
-  color: #333333;
-  margin-bottom: 10px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.history-prompt {
-  color: #666666;
-  font-size: 0.9em;
-  margin-bottom: 8px;
-  line-height: 1.4;
-}
-
-.history-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 15px;
-  padding-top: 15px;
-  border-top: 1px solid #e8e8e8;
-}
-
-.history-style {
-  background: #333333;
-  color: white;
-  padding: 4px 12px;
-  border-radius: 15px;
-  font-size: 0.8em;
-  font-weight: 500;
-}
-
-.history-time {
-  color: #888888;
-  font-size: 0.8em;
-}
-
-.empty-history {
-  text-align: center;
-  padding: 60px 20px;
-  color: #666666;
-}
-
-.empty-history .icon {
-  font-size: 4em;
-  margin-bottom: 20px;
-  opacity: 0.5;
-}
-
-/* 推荐样式 */
-.recommendation-grid {
+.history-image-fallback {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 20px;
-  margin-top: 20px;
-}
-
-.recommendation-card {
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+  place-content: center;
+  height: 100%;
+  color: #687169;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .75rem;
   text-align: center;
-  transition: all 0.3s ease;
-  border: 1px solid #e8e8e8;
 }
-
-.recommendation-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-}
-
-.recommendation-icon {
-  font-size: 2em;
-  margin-bottom: 10px;
-  color: #333333;
-}
-
-.recommendation-title {
-  font-weight: bold;
-  color: #333333;
-  margin-bottom: 8px;
-}
-
-.recommendation-desc {
-  color: #666666;
-  font-size: 0.9em;
+.history-entry h2 {
+  margin: 0 0 .55rem;
+  overflow-wrap: anywhere;
+  font-size: 1.15rem;
   line-height: 1.4;
 }
-
-.hot-score {
-  background: #555555;
-  color: white;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 0.8em;
-  margin-top: 8px;
-  display: inline-block;
+.history-entry p:not(.record-style) {
+  margin: 0;
+  color: #596259;
+  font-size: .9rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
 }
-
+.history-entry time {
+  display: block;
+  margin-top: .7rem;
+  color: #788178;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .75rem;
+}
+.reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border-top: 2px solid #17221f;
+  background: #c9c3b6;
+}
+.reference-list, .profile-list {
+  min-width: 0;
+  margin: 0;
+  padding: 1.5rem;
+  background: #fbfaf5;
+}
+.reference-list h2 {
+  margin: 0 0 1.2rem;
+  font-size: 1.4rem;
+}
+.reference-list article {
+  padding: 1rem 0;
+  border-top: 1px solid #d4cec2;
+}
+.reference-list h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.1rem;
+}
+.reference-list p {
+  margin: .5rem 0 0;
+  color: #596259;
+  line-height: 1.55;
+}
+.profile-list {
+  display: grid;
+  gap: 1rem;
+  max-width: 38rem;
+  border-top: 2px solid #17221f;
+}
+.profile-list div {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #d4cec2;
+}
+.profile-list div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.profile-list dd {
+  margin: .4rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 1.15rem;
+}
+.workspace-nav button:focus-visible, .text-button:focus-visible, .direction-card:focus-visible, .primary-button:focus-visible, .secondary-button:focus-visible, .rating-buttons button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 3px solid #a44536;
+  outline-offset: 3px;
+}
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+@media (max-width: 900px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+  }
+  .workspace-nav {
+    display: flex;
+    overflow-x: auto;
+    padding: 0;
+    border-right: 0;
+    border-bottom: 1px solid #d4cec2;
+  }
+  .workspace-nav button {
+    flex: 1 0 132px;
+    justify-content: center;
+    padding: .95rem .75rem;
+    border-bottom: 0;
+    border-right: 1px solid #d4cec2;
+    text-align: center;
+  }
+  .workspace-content {
+    padding: clamp(1.3rem, 4vw, 3rem);
+  }
+  .direction-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .workspace-header {
+    min-height: 70px;
+    padding: .75rem 1rem;
+  }
+  .brand {
+    font-size: .95rem;
+  }
+  .account-name {
+    display: none;
+  }
+  .workspace-nav button {
+    flex-basis: 105px;
+    font-size: .9rem;
+  }
+  .section-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .section-heading h1 {
+    font-size: clamp(2rem, 10vw, 3.1rem);
+  }
+  .direction-grid, .dimension-grid, .result-grid, .reference-grid {
+    grid-template-columns: 1fr;
+  }
+  .direction-card {
+    min-height: 0;
+  }
+  .image-stage {
+    border-right: 0;
+    border-bottom: 1px solid #c9c3b6;
+  }
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+  .history-entry {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+  .result-meta {
+    grid-template-columns: 1fr;
+    gap: .7rem;
+  }
+}
+@media (max-width: 390px) {
+  .workspace-nav button {
+    flex-basis: 88px;
+    font-size: .82rem;
+  }
+  .workspace-nav button span {
+    display: none;
+  }
+  .form-actions {
+    flex-direction: column;
+  }
+  .primary-button, .secondary-button {
+    width: 100%;
+  }
+  .history-entry {
+    grid-template-columns: 1fr;
+  }
+  .history-visual {
+    aspect-ratio: 16 / 9;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 </style>
