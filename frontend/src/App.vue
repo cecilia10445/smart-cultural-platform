@@ -28,17 +28,30 @@
           </div>
 
           <form class="creation-form" @submit.prevent="generateContent" novalidate>
+            <div class="brief-grid">
+              <label class="field-block"><span>产品类型</span><input v-model="brief.product_type" :disabled="loading" placeholder="例如：书签" required></label>
+              <label class="field-block"><span>来源类型</span><select v-model="brief.cultural_source.source_type" :disabled="loading"><option value="artifact">器物或纹样</option><option value="heritage">非遗技艺</option><option value="literature">文学意象</option></select></label>
+              <label class="field-block"><span>文化原型或灵感来源</span><input v-model="brief.cultural_source.name" :disabled="loading" placeholder="例如：青花折枝纹" required></label>
+              <label class="field-block"><span>已知时代（可选）</span><input v-model="brief.cultural_source.era" :disabled="loading" placeholder="例如：明代"></label>
+              <label class="field-block"><span>已知作者或机构（可选）</span><input v-model="brief.cultural_source.creator" :disabled="loading"></label>
+              <label class="field-block"><span>使用场景</span><input v-model="brief.use_case" :disabled="loading" placeholder="例如：博物馆文创商店" required></label>
+              <label class="field-block"><span>目标受众（可选）</span><input v-model="brief.target_audience" :disabled="loading" placeholder="例如：年轻游客和阅读爱好者"></label>
+            </div>
             <div class="field-block">
-              <label for="prompt">主题与需求</label>
-              <textarea id="prompt" v-model="prompt" rows="7" :disabled="loading" placeholder="例如：以青花瓷纹样为灵感，为博物馆文创书签构思图文内容。" aria-describedby="prompt-help"></textarea>
-              <p id="prompt-help" class="field-help">可写主题、使用场景、人物或想表达的文化意象。</p>
+              <label for="facts">确认事实（每行一条）</label>
+              <textarea id="facts" v-model="confirmedFactsText" rows="3" :disabled="loading" placeholder="只填写你已确认的信息；未提供资料时，系统不会把具体历史信息标记为已确认。"></textarea>
+              <p class="field-help">文化背景只依据这些事实整理；设计解读和产品讲解属于创意内容。</p>
+            </div>
+            <div class="field-block">
+              <label for="form-material">造型与材质</label>
+              <textarea id="form-material" v-model="brief.form_and_material" rows="3" :disabled="loading" placeholder="例如：长条形纸质书签，带丝带" required></textarea>
             </div>
 
             <fieldset class="field-block direction-fieldset" :disabled="loading">
               <legend>画面方向</legend>
               <p class="field-help">先选一组策展方案，也可以继续调整下面的画面维度。</p>
               <div class="direction-grid" role="radiogroup" aria-label="画面方向策展方案">
-                <button v-for="direction in visualDirections" :key="direction.id" type="button" class="direction-card" :class="{ active: selectedDirectionId === direction.id }" :aria-pressed="selectedDirectionId === direction.id" @click="selectDirection(direction)">
+                <button v-for="direction in visualDirections" :key="direction.id" type="button" class="direction-card" :class="{ active: selectedDirectionId === direction.id }" :aria-pressed="selectedDirectionId === direction.id ? 'true' : 'false'" @click="selectDirection(direction)">
                   <span>{{ direction.name }}</span>
                   <small>{{ direction.summary }}</small>
                 </button>
@@ -71,7 +84,7 @@
             <div class="form-actions">
               <button type="submit" class="primary-button" :disabled="loading">
                 <span v-if="loading" class="button-loading"><span class="inline-spinner" aria-hidden="true"></span>正在生成</span>
-                <span v-else>开始生成</span>
+                <span v-else>生成文创产品</span>
               </button>
               <button type="button" class="secondary-button" :disabled="loading" @click="clearAll">清空本页内容</button>
             </div>
@@ -92,7 +105,7 @@
             </div>
             <div class="result-grid">
               <div class="image-stage">
-                <img v-if="!imageFailed" :src="result.image_url" :alt="result.title" @error="imageFailed = true">
+                <img v-if="!imageFailed" :src="result.image_url" :alt="result.product_name" @error="imageFailed = true">
                 <div v-else class="image-unavailable" role="status">
                   <span aria-hidden="true"></span>
                   <p>图片暂时无法加载</p>
@@ -104,8 +117,10 @@
                 </div>
               </div>
               <article class="generated-copy">
-                <h3>{{ result.title }}</h3>
-                <div class="content-copy">{{ result.content }}</div>
+                <h3>{{ result.product_name }}</h3>
+                <section class="content-copy"><h4>文化背景</h4><p>{{ result.factual_background.text }}</p><small>证据状态：{{ result.factual_background.status === 'user_supplied' ? '用户提供的事实' : '证据不足' }}</small></section>
+                <section class="content-copy"><h4>设计解读</h4><p>{{ result.design_interpretation }}</p></section>
+                <section class="content-copy"><h4>产品讲解</h4><p>{{ result.product_copy }}</p></section>
                 <dl class="result-meta">
                   <div><dt>生成耗时</dt><dd>{{ result.generation_time }} 秒</dd></div>
                   <div><dt>记录编号</dt><dd>{{ result.log_id }}</dd></div>
@@ -225,6 +240,14 @@ export default {
     return {
       activeTab: 'generate',
       prompt: '',
+      confirmedFactsText: '',
+      brief: {
+        product_type: '',
+        cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' },
+        form_and_material: '',
+        use_case: '',
+        target_audience: '',
+      },
       dimensions: { ...DEFAULT_DIRECTION.dimensions },
       selectedDirectionId: DEFAULT_DIRECTION_ID,
       supplement: '',
@@ -265,6 +288,26 @@ export default {
     currentStyle() {
       return buildStylePrompt(this.dimensions, this.supplement)
     },
+    visualDirection() {
+      const findText = (key) => this.dimensionOptions[key].find((item) => item.id === this.dimensions[key])?.promptText || ''
+      return {
+        preset_id: this.selectedDirectionId || 'custom',
+        cultural_context: findText('culturalContext'), medium: findText('medium'),
+        palette: findText('palette'), composition: findText('composition'),
+        additional_requirements: this.supplement.trim(),
+      }
+    },
+    culturalBrief() {
+      return {
+        brief_version: '1.0',
+        brief: {
+          ...this.brief,
+          cultural_source: { ...this.brief.cultural_source },
+          confirmed_facts: this.confirmedFactsText.split('\n').map((value) => value.trim()).filter(Boolean),
+          visual_direction: this.visualDirection,
+        },
+      }
+    },
   },
   methods: {
     switchTab(tab) {
@@ -298,6 +341,8 @@ export default {
     },
     clearAll() {
       this.prompt = ''
+      this.confirmedFactsText = ''
+      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '' }
       this.dimensions = { ...DEFAULT_DIRECTION.dimensions }
       this.selectedDirectionId = DEFAULT_DIRECTION_ID
       this.supplement = ''
@@ -314,18 +359,19 @@ export default {
       return body?.status === 'success'
         && typeof body.image_url === 'string'
         && body.image_url
-        && typeof body.title === 'string'
-        && body.title
-        && typeof body.content === 'string'
-        && body.content
+        && body.generation_kind === 'cultural_product'
+        && typeof body.product_name === 'string' && body.product_name
+        && typeof body.design_interpretation === 'string' && body.design_interpretation
+        && typeof body.product_copy === 'string' && body.product_copy
+        && body.factual_background && typeof body.factual_background.text === 'string'
         && Number.isFinite(Number(body.generation_time))
         && body.log_id !== undefined
         && body.log_id !== null
     },
     async generateContent() {
       if (this.loading) return
-      if (!this.prompt.trim()) {
-        this.error = '请先填写主题与需求。'
+      if (!this.brief.product_type.trim() || !this.brief.cultural_source.name.trim() || !this.brief.form_and_material.trim() || !this.brief.use_case.trim()) {
+        this.error = '请填写产品类型、文化来源、造型与材质和使用场景。'
         return
       }
       const headers = this.authHeaders()
@@ -346,7 +392,7 @@ export default {
       this.ratingError = ''
 
       try {
-        const response = await axios.post('/api/generate', { prompt: this.prompt.trim(), style }, { headers })
+        const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, { headers })
         if (!this.validGeneration(response.data)) {
           this.error = '生成结果不完整，请稍后重试。'
           return
@@ -373,7 +419,7 @@ export default {
       try {
         const response = await axios.post('/api/rating', {
           image_url: this.result.image_url,
-          prompt: this.prompt,
+          prompt: this.brief.cultural_source.name,
           style: this.resultStyle,
           rating,
           log_id: this.result.log_id,
@@ -401,7 +447,7 @@ export default {
       try {
         const response = await axios.post('/api/download', {
           image_url: this.result.image_url,
-          prompt: this.prompt,
+          prompt: this.brief.cultural_source.name,
           style: this.resultStyle,
         }, { headers })
         if (response.data?.status !== 'success') {
