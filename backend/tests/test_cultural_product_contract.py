@@ -97,14 +97,19 @@ class V2ModelStub:
 
 class V2MySQLStub:
     def __init__(self, result=901, available=True):
-        self.result, self.available, self.inserts = result, available, []
+        self.result, self.available, self.inserts, self.generation_inserts = result, available, [], []
 
     def connect(self):
         return self.available
 
     def execute_insert(self, query, params):
         self.inserts.append((query, params))
+        if "INSERT INTO generation_logs" in query:
+            self.generation_inserts.append((query, params))
         return self.result
+
+    def execute_query(self, _query, _params, max_retries=0):
+        return 1
 
 
 def test_v2_api_persists_validated_json_and_returns_insert_id(app_module, client, monkeypatch):
@@ -119,7 +124,7 @@ def test_v2_api_persists_validated_json_and_returns_insert_id(app_module, client
     assert body["log_id"] == 901
     assert body["generation_kind"] == "cultural_product"
     assert body["factual_background"]["citations"] == []
-    persisted = database.inserts[0][1]
+    persisted = database.generation_inserts[0][1]
     assert json.loads(persisted[-2])["product_type"] == "bookmark"
     assert json.loads(persisted[-1])["product_name"] == "青花书签"
 
@@ -145,7 +150,7 @@ def test_v2_data_origin_is_server_controlled_and_client_field_is_rejected(app_mo
         headers={"Authorization": f"Bearer {login(client)}"},
     )
     assert accepted.status_code == 200
-    assert database.inserts[0][1][15] == "production"
+    assert database.generation_inserts[0][1][15] == "production"
 
 
 def test_v2_marks_only_explicit_demo_smoke_identity_as_test_data(app_module, client, monkeypatch):
@@ -164,7 +169,7 @@ def test_v2_marks_only_explicit_demo_smoke_identity_as_test_data(app_module, cli
         headers={"Authorization": f"Bearer {login(client)}"},
     )
     assert response.status_code == 200
-    assert database.inserts[0][1][15] == "test"
+    assert database.generation_inserts[0][1][15] == "test"
 
 
 def test_v2_api_returns_stable_validation_error_without_auth_leak(app_module, client):
@@ -231,3 +236,93 @@ def test_v2_image_model_log_uses_image_generation_stage(app_module, client, monk
     assert events[0][1]["stage"] == "image_generation"
     assert events[0][1]["provider_http_status"] == 400
     assert events[0][1]["endpoint_path"] == "/api/v1/services/aigc/multimodal-generation/generation"
+
+
+def test_v2_tracking_success_has_one_attempt_two_metrics_and_request_id(app_module, client, monkeypatch):
+    calls = []
+
+    class Tracker:
+        def __init__(self, _db, request_id, *_args):
+            self.request_id = request_id
+            calls.append(("init", request_id))
+        def start(self): calls.append(("start",))
+        def record_metric(self, stage, _model, status, _started, **_kwargs): calls.append(("metric", stage, status))
+        def succeed(self, log_id): calls.append(("succeed", log_id))
+        def fail(self, stage, code): calls.append(("fail", stage, code))
+
+    monkeypatch.setattr(app_module, "GenerationTracker", Tracker)
+    monkeypatch.setattr(app_module, "mysql_service", V2MySQLStub())
+    monkeypatch.setattr(app_module, "aigc_service", V2ModelStub())
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args: "/static/images/test.png")
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    body = response.get_json()
+    assert response.status_code == 200 and body["request_id"] == calls[0][1]
+    assert calls == [("init", body["request_id"]), ("start",), ("metric", "text_generation", "SUCCEEDED"), ("metric", "image_generation", "SUCCEEDED"), ("succeed", 901)]
+
+
+def test_v2_text_metric_failure_blocks_image_call(app_module, client, monkeypatch):
+    calls = []
+
+    class Tracker:
+        def __init__(self, *_args): pass
+        def start(self): pass
+        def record_metric(self, stage, *_args, **_kwargs):
+            calls.append(stage)
+            if stage == "text_generation":
+                raise app_module.TrackingPersistenceError("TRACKING_METRIC_PERSIST_FAILED")
+        def fail(self, *_args): pass
+
+    class Model(V2ModelStub):
+        def generate_image_from_prompt(self, _prompt):
+            raise AssertionError("image model must not run after text metric persistence fails")
+
+    monkeypatch.setattr(app_module, "GenerationTracker", Tracker)
+    monkeypatch.setattr(app_module, "mysql_service", V2MySQLStub())
+    monkeypatch.setattr(app_module, "aigc_service", Model())
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    assert response.status_code == 503
+    assert response.get_json()["code"] == "TRACKING_METRIC_PERSIST_FAILED"
+    assert calls == ["text_generation"]
+
+
+def test_v2_tracking_initialization_failure_makes_zero_model_calls(app_module, client, monkeypatch):
+    model_calls = []
+
+    class Tracker:
+        def __init__(self, *_args): pass
+        def start(self): raise app_module.TrackingPersistenceError("TRACKING_INIT_FAILED")
+
+    class Model(V2ModelStub):
+        def generate_cultural_product_text(self, _brief):
+            model_calls.append(True)
+            return super().generate_cultural_product_text(_brief)
+
+    monkeypatch.setattr(app_module, "GenerationTracker", Tracker)
+    monkeypatch.setattr(app_module, "mysql_service", V2MySQLStub())
+    monkeypatch.setattr(app_module, "aigc_service", Model())
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    assert response.status_code == 503 and response.get_json()["code"] == "TRACKING_INIT_FAILED"
+    assert model_calls == []
+
+
+def test_v2_returns_durable_success_when_tracking_finalize_fails(app_module, client, monkeypatch):
+    events, database = [], V2MySQLStub()
+
+    class Tracker:
+        def __init__(self, *_args): pass
+        def start(self): pass
+        def record_metric(self, *_args, **_kwargs): pass
+        def succeed(self, _log_id): raise app_module.TrackingPersistenceError("TRACKING_FINALIZE_FAILED")
+        def fail(self, *_args): raise AssertionError("completed attempt must not be fabricated as failed")
+
+    monkeypatch.setattr(app_module, "GenerationTracker", Tracker)
+    monkeypatch.setattr(app_module, "mysql_service", database)
+    monkeypatch.setattr(app_module, "aigc_service", V2ModelStub())
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args: "/static/images/test.png")
+    monkeypatch.setattr(app_module, "log_event", lambda event, data: events.append((event, data)))
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    body = response.get_json()
+    assert response.status_code == 200 and body["log_id"] == 901 and body["request_id"]
+    assert len(database.generation_inserts) == 1
+    assert any(item[1].get("code") == "TRACKING_FINALIZE_FAILED" for item in events if item[0] == "error")
+    assert "青花书签" not in json.dumps(events, ensure_ascii=False)

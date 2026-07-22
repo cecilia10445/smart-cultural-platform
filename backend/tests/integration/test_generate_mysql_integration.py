@@ -24,7 +24,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert inspector.has_table("alembic_version")
     assert inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0003"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0004"
         create_table = connection.exec_driver_sql("SHOW CREATE TABLE generation_logs").one()[1]
         historical = connection.execute(sa.text(
             "SELECT id,user_id,event_type,timestamp,prompt,style,image_url,title,content,"
@@ -100,6 +100,12 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
 
     assert inspector.has_table("etl_batches")
     assert inspector.has_table("data_quality_results")
+    assert inspector.has_table("generation_attempts")
+    assert inspector.has_table("model_call_metrics")
+    attempt_columns = {column["name"]: column for column in inspector.get_columns("generation_attempts")}
+    assert set(attempt_columns) == {"request_id", "user_id", "data_origin", "generation_kind", "prompt_template_version", "brief_sha256", "status", "failed_stage", "error_code", "generation_log_id", "total_latency_ms", "created_at", "finished_at"}
+    metric_columns = {column["name"]: column for column in inspector.get_columns("model_call_metrics")}
+    assert set(metric_columns) == {"id", "request_id", "stage", "model_name", "status", "latency_ms", "provider_http_status", "provider_error_code", "input_tokens", "output_tokens", "total_tokens", "image_count", "created_at"}
     batch_columns = {column["name"]: column for column in inspector.get_columns("etl_batches")}
     assert set(batch_columns) == {
         "batch_id", "pipeline_name", "status", "watermark_start_time", "watermark_start_id",
@@ -203,13 +209,19 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert json.loads(v2_row["brief_json"])["product_type"] == "书签"
     assert json.loads(v2_row["response_json"])["product_name"] == "容器青花书签"
     assert v2_row["title"] == "容器青花书签" and v2_row["content"] == "容器测试产品讲解"
+    with database["engine"].connect() as connection:
+        attempt = connection.execute(sa.text("SELECT request_id,status,generation_log_id,brief_sha256 FROM generation_attempts WHERE generation_log_id=:id"), {"id": v2_body["log_id"]}).mappings().one()
+        metrics = connection.execute(sa.text("SELECT stage,status,input_tokens,output_tokens,total_tokens,image_count FROM model_call_metrics WHERE request_id=:request_id ORDER BY id"), {"request_id": attempt["request_id"]}).mappings().all()
+    assert attempt["status"] == "SUCCEEDED" and len(attempt["brief_sha256"]) == 64
+    assert [(row["stage"], row["status"]) for row in metrics] == [("text_generation", "SUCCEEDED"), ("image_generation", "SUCCEEDED")]
+    assert metrics[0]["input_tokens"] is None and metrics[1]["image_count"] == 1
 
-    with pytest.raises(RuntimeError, match="automatic destructive downgrade is not allowed"):
+    with pytest.raises(RuntimeError, match="generation attempt tracking downgrade is disabled"):
         command.downgrade(Config("alembic.ini"), "0001")
     post_downgrade_inspector = sa.inspect(database["engine"])
     assert post_downgrade_inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0003"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0004"
         assert connection.exec_driver_sql("SELECT COUNT(*) FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
         assert connection.exec_driver_sql("SELECT download_count FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
     assert post_downgrade_inspector.has_table("etl_batches")
