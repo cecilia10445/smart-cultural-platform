@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 
 TARGET_TYPE = "aigc_text_generation_component"
-MAX_REAL_CASES = 5
+MAX_REAL_CASES = 1
 REQUIRED_CASE_KEYS = {
     "case_id", "category", "prompt", "style", "expected", "required_fields",
     "contains_keywords", "forbidden_keywords", "assertion_strength", "description",
@@ -30,6 +30,9 @@ class ExecutorResponse:
     title: str | None = None
     content: str | None = None
     error_code: str | None = None
+    usage: dict[str, int | float] | None = None
+    timeout_stage: str | None = None
+    http_status: int | None = None
 
 
 class Executor(Protocol):
@@ -64,23 +67,29 @@ class StubExecutor:
 class RealDashScopeExecutor:
     """Explicit opt-in text provider executor; it never estimates token usage or cost."""
 
-    executor_type = "dashscope"
+    executor_type = "real"
     model_mode = "real_model"
-    measurement_scope = TARGET_TYPE
+    measurement_scope = "real_model_smoke"
 
     def __init__(self) -> None:
-        if not os.getenv("DASHSCOPE_API_KEY"):
-            raise RuntimeError("REAL_MODEL_NOT_CONFIGURED")
         from backend.services.aigc_service import AIGCService, AIGCServiceError
         self._service = AIGCService()
+        if not self._service.api_key:
+            raise RuntimeError("REAL_MODEL_NOT_CONFIGURED")
         self._provider_error = AIGCServiceError
+        self.model_name = self._service.text_model
 
     def execute(self, case: dict[str, Any]) -> ExecutorResponse:
         try:
-            title, content = self._service.generate_text_content(case["prompt"], case["style"])
+            title, content, usage = self._service.generate_text_content_with_metadata(case["prompt"], case["style"])
         except self._provider_error as error:
-            return ExecutorResponse("error", error_code=error.code)
-        return ExecutorResponse("success", title=title, content=content)
+            return ExecutorResponse(
+                "error",
+                error_code=error.code,
+                timeout_stage=error.timeout_stage,
+                http_status=error.http_status,
+            )
+        return ExecutorResponse("success", title=title, content=content, usage=usage)
 
 
 def load_dataset(path: str | Path) -> dict[str, Any]:
@@ -162,11 +171,16 @@ def run_evaluation(dataset: dict[str, Any], executor: Executor, cases: list[dict
         try:
             response = executor.execute(case)
             reasons = _assert_case(case, response)
-            result = {"case_id": case["case_id"], "status": "passed" if not reasons else "failed", "outcome": response.outcome, "error_code": response.error_code, "reasons": reasons}
+            result = {
+                "case_id": case["case_id"], "status": "passed" if not reasons else "failed",
+                "outcome": response.outcome, "error_code": response.error_code, "reasons": reasons,
+                "provider_usage": response.usage, "timeout_stage": response.timeout_stage,
+                "http_status": response.http_status,
+            }
         except TimeoutError:
-            result = {"case_id": case["case_id"], "status": "error", "outcome": "error", "error_code": "EXECUTOR_TIMEOUT", "reasons": ["EXECUTOR_TIMEOUT"]}
+            result = {"case_id": case["case_id"], "status": "error", "outcome": "error", "error_code": "EXECUTOR_TIMEOUT", "reasons": ["EXECUTOR_TIMEOUT"], "provider_usage": None, "timeout_stage": None, "http_status": None}
         except Exception:
-            result = {"case_id": case["case_id"], "status": "error", "outcome": "error", "error_code": "EXECUTOR_ERROR", "reasons": ["EXECUTOR_ERROR"]}
+            result = {"case_id": case["case_id"], "status": "error", "outcome": "error", "error_code": "EXECUTOR_ERROR", "reasons": ["EXECUTOR_ERROR"], "provider_usage": None, "timeout_stage": None, "http_status": None}
         result["latency_ms"] = round((clock() - start) * 1000, 3)
         latency_samples_ms.append(result["latency_ms"])
         results.append(result)
@@ -175,10 +189,13 @@ def run_evaluation(dataset: dict[str, Any], executor: Executor, cases: list[dict
     return {
         "dataset_version": dataset["dataset_version"],
         "target_type": TARGET_TYPE,
-        "data_origin": "test",
+        "data_origin": "production_model" if executor.executor_type == "real" else "test",
         "executor_type": executor.executor_type,
         "model_mode": executor.model_mode,
         "measurement_scope": executor.measurement_scope,
+        "model_name": getattr(executor, "model_name", None),
+        "prompt_template_version": dataset.get("prompt_template_version"),
+        "sample_size": len(selected_cases),
         "scope_description": "Only AIGCService.generate_text_content text generation is covered; this is not /api/generate, image generation, login, or persistence.",
         "started_at": started_at,
         "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -201,8 +218,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.executor == "real" and not args.allow_real_model:
         parser.error("real execution requires --allow-real-model")
-    if args.executor == "real" and (args.max_real_cases is None or not 1 <= args.max_real_cases <= MAX_REAL_CASES):
-        parser.error(f"real execution requires --max-real-cases between 1 and {MAX_REAL_CASES}")
+    if args.executor == "real" and args.max_real_cases != MAX_REAL_CASES:
+        parser.error("real execution requires --max-real-cases 1")
     dataset = load_dataset(args.dataset)
     cases = dataset["cases"][:args.max_real_cases] if args.executor == "real" else None
     executor: Executor = StubExecutor() if args.executor == "stub" else RealDashScopeExecutor()

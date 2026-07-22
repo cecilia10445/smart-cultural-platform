@@ -126,6 +126,19 @@ def test_real_execution_requires_explicit_opt_in_and_bounded_case_limit(monkeypa
 
 
 def test_real_executor_requires_a_configured_key_without_instantiating_provider(monkeypatch):
-    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    class UnconfiguredService:
+        api_key = None
+
+    monkeypatch.setattr("backend.services.aigc_service.AIGCService", lambda: UnconfiguredService())
     with pytest.raises(RuntimeError, match="REAL_MODEL_NOT_CONFIGURED"):
         runner.RealDashScopeExecutor()
+
+
+def test_real_report_never_contains_provider_exception_or_authorization():
+    report = runner.run_evaluation(
+        dataset([case()]),
+        FakeExecutor(error=RuntimeError("Authorization: Bearer unit-test-key raw-provider-response")),
+    )
+    rendered = json.dumps(report)
+    assert "unit-test-key" not in rendered
+    assert "raw-provider-response" not in rendered

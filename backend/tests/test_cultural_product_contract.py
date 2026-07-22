@@ -124,6 +124,49 @@ def test_v2_api_persists_validated_json_and_returns_insert_id(app_module, client
     assert json.loads(persisted[-1])["product_name"] == "青花书签"
 
 
+def test_v2_data_origin_is_server_controlled_and_client_field_is_rejected(app_module, client, monkeypatch):
+    database = V2MySQLStub()
+    monkeypatch.setattr(app_module, "mysql_service", database)
+    monkeypatch.setattr(app_module, "aigc_service", V2ModelStub())
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/test.png")
+    client_payload = payload()
+    client_payload["data_origin"] = "test"
+    rejected = client.post(
+        "/api/v2/cultural-products/generate",
+        json=client_payload,
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+    assert rejected.status_code == 400
+    assert rejected.get_json()["code"] == "INVALID_REQUEST_FORMAT"
+
+    accepted = client.post(
+        "/api/v2/cultural-products/generate",
+        json=payload(),
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+    assert accepted.status_code == 200
+    assert database.inserts[0][1][15] == "production"
+
+
+def test_v2_marks_only_explicit_demo_smoke_identity_as_test_data(app_module, client, monkeypatch):
+    database = V2MySQLStub()
+    app_module.settings = app_module.settings.__class__(
+        **{**app_module.settings.__dict__, "run_real_business_smoke": True,
+           "mysql_database": "aigc_platform_demo", "smoke_test_username": "legacy",
+           "smoke_test_password": "local-only"}
+    )
+    monkeypatch.setattr(app_module, "mysql_service", database)
+    monkeypatch.setattr(app_module, "aigc_service", V2ModelStub())
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/test.png")
+    response = client.post(
+        "/api/v2/cultural-products/generate",
+        json=payload(),
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+    assert response.status_code == 200
+    assert database.inserts[0][1][15] == "test"
+
+
 def test_v2_api_returns_stable_validation_error_without_auth_leak(app_module, client):
     token = login(client)
     response = client.post("/api/v2/cultural-products/generate", json={"brief_version": "1.0", "brief": {}}, headers={"Authorization": f"Bearer {token}"})
@@ -140,3 +183,51 @@ def test_v2_api_handles_model_failure_and_persistence_failure(app_module, client
     response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
     assert response.status_code == 502
     assert response.get_json()["code"] == "MODEL_REQUEST_TIMEOUT"
+
+
+def test_v2_model_log_is_stage_specific_and_does_not_expose_provider_details(app_module, client, monkeypatch):
+    events = []
+
+    class BrokenModel:
+        def generate_cultural_product_text(self, _brief):
+            raise AIGCServiceError(
+                "MODEL_READ_TIMEOUT",
+                "Authorization: Bearer unit-test-key raw-provider-response",
+                True,
+                timeout_stage="read",
+                http_status=200,
+            )
+
+    monkeypatch.setattr(app_module, "aigc_service", BrokenModel())
+    monkeypatch.setattr(app_module, "mysql_service", V2MySQLStub())
+    monkeypatch.setattr(app_module, "log_event", lambda event_type, data: events.append((event_type, data)))
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    body = response.get_json()
+    assert response.status_code == 502
+    assert body["code"] == "MODEL_READ_TIMEOUT"
+    rendered = json.dumps({"body": body, "events": events})
+    assert "unit-test-key" not in rendered
+    assert "raw-provider-response" not in rendered
+    assert events == [("error", {
+        "user_id": "U1", "request_id": body["request_id"], "code": "MODEL_READ_TIMEOUT", "stage": "text_generation",
+        "model_name": None, "endpoint_path": "/responses", "timeout_stage": "read", "provider_http_status": 200,
+        "provider_error_code": None,
+    })]
+
+
+def test_v2_image_model_log_uses_image_generation_stage(app_module, client, monkeypatch):
+    events = []
+
+    class ImageFailureModel(V2ModelStub):
+        def generate_image_from_prompt(self, _prompt):
+            raise AIGCServiceError("MODEL_REQUEST_FAILED", "provider detail", False, http_status=400)
+
+    monkeypatch.setattr(app_module, "aigc_service", ImageFailureModel())
+    monkeypatch.setattr(app_module, "mysql_service", V2MySQLStub())
+    monkeypatch.setattr(app_module, "log_event", lambda event_type, data: events.append((event_type, data)))
+    response = client.post("/api/v2/cultural-products/generate", json=payload(), headers={"Authorization": f"Bearer {login(client)}"})
+    assert response.status_code == 502
+    assert response.get_json()["code"] == "MODEL_REQUEST_FAILED"
+    assert events[0][1]["stage"] == "image_generation"
+    assert events[0][1]["provider_http_status"] == 400
+    assert events[0][1]["endpoint_path"] == "/api/v1/services/aigc/multimodal-generation/generation"
