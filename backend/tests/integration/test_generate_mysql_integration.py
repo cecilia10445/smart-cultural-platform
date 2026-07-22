@@ -1,5 +1,6 @@
 import os
 import uuid
+import json
 
 import pytest
 import pymysql
@@ -23,7 +24,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert inspector.has_table("alembic_version")
     assert inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0002"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0003"
         create_table = connection.exec_driver_sql("SHOW CREATE TABLE generation_logs").one()[1]
         historical = connection.execute(sa.text(
             "SELECT id,user_id,event_type,timestamp,prompt,style,image_url,title,content,"
@@ -40,7 +41,8 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
         assert historical[field] == expected_historical[field]
     assert historical["created_at"] is not None and historical["updated_at"] is not None
     columns = {column["name"]: column for column in inspector.get_columns("generation_logs")}
-    assert len(columns) == 19
+    assert all(columns[name]["nullable"] for name in ("generation_kind", "prompt_template_version", "brief_json", "response_json"))
+    assert len(columns) == 23
     expected_nullable = {
         "id": False, "user_id": False, "event_type": False, "timestamp": False,
         "prompt": True, "style": True, "image_url": True, "title": True,
@@ -48,6 +50,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
         "user_rating": True, "download_count": False, "user_age": True,
         "user_gender": True, "login_time": True, "data_origin": True,
         "created_at": False, "updated_at": False,
+        "generation_kind": True, "prompt_template_version": True, "brief_json": True, "response_json": True,
     }
     assert {name: column["nullable"] for name, column in columns.items()} == expected_nullable
     expected_types = {
@@ -58,6 +61,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
         "user_rating": "DECIMAL(3, 2)", "download_count": "INTEGER",
         "user_age": "TINYINT", "user_gender": "TINYINT", "login_time": "DATETIME",
         "data_origin": "VARCHAR(20)", "created_at": "DATETIME", "updated_at": "DATETIME",
+        "generation_kind": "VARCHAR(48)", "prompt_template_version": "VARCHAR(64)", "brief_json": "JSON", "response_json": "JSON",
     }
     for name, expected_type in expected_types.items():
         assert expected_type in str(columns[name]["type"]).upper()
@@ -131,6 +135,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     model_calls = []
     network_calls = []
     monkeypatch.setattr(app_module, "generate_content", lambda prompt, style: (model_calls.append((prompt, style)) or ("https://example.invalid/integration.png", "integration title", "integration content")))
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/integration-test.png")
     monkeypatch.setattr(app_module, "log_event", lambda *_args, **_kwargs: True)
     monkeypatch.setattr("requests.get", lambda *_args, **_kwargs: (network_calls.append(True) or StubImageResponse()))
 
@@ -140,7 +145,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert response.status_code == 200 and body["status"] == "success"
     with database["engine"].connect() as connection:
         row = connection.execute(sa.text("SELECT id,user_id,prompt,style,title,content,image_url,data_origin,created_at,updated_at FROM generation_logs WHERE id=:id"), {"id": body["log_id"]}).mappings().one()
-    assert {key: row[key] for key in ("id", "user_id", "prompt", "style", "title", "content", "image_url", "data_origin")} == {"id": body["log_id"], "user_id": "U1", "prompt": prompt, "style": "integration-style", "title": "integration title", "content": "integration content", "image_url": "https://example.invalid/integration.png", "data_origin": "production"}
+    assert {key: row[key] for key in ("id", "user_id", "prompt", "style", "title", "content", "image_url", "data_origin")} == {"id": body["log_id"], "user_id": "U1", "prompt": prompt, "style": "integration-style", "title": "integration title", "content": "integration content", "image_url": "/static/images/integration-test.png", "data_origin": "production"}
     assert row["created_at"] is not None
     assert row["updated_at"] is not None
 
@@ -151,7 +156,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
         automatic_updated_at = connection.execute(sa.text("SELECT updated_at FROM generation_logs WHERE id=:id"), {"id": body["log_id"]}).scalar_one()
     assert automatic_updated_at > controlled_old_updated_at
     assert len(model_calls) == 1
-    assert len(network_calls) == 1
+    assert len(network_calls) == 0
 
     restricted_connection = pymysql.connect(
         host=database["host"],
@@ -172,12 +177,39 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     finally:
         restricted_connection.close()
 
-    with pytest.raises(RuntimeError, match="analytics contract downgrade is disabled"):
+    class CulturalProductModelStub:
+        def generate_cultural_product_text(self, _brief):
+            return {"product_name": "容器青花书签", "design_interpretation": "容器测试设计解读", "product_copy": "容器测试产品讲解"}
+
+        def generate_image_from_prompt(self, _image_prompt):
+            return "https://example.invalid/v2.png"
+
+    monkeypatch.setattr(app_module, "aigc_service", CulturalProductModelStub())
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/v2-test.png")
+    v2_response = client.post("/api/v2/cultural-products/generate", json={
+        "brief_version": "1.0",
+        "brief": {
+            "product_type": "书签", "cultural_source": {"source_type": "artifact", "name": "青花折枝纹", "era": None, "creator": None},
+            "confirmed_facts": ["用户确认的测试事实"], "form_and_material": "纸质书签", "use_case": "容器测试", "target_audience": None,
+            "visual_direction": {"preset_id": "blue-white-pattern", "cultural_context": "青花瓷", "medium": "釉下青花", "palette": "靛青瓷白", "composition": "中心纹样", "additional_requirements": None},
+        },
+    }, headers={"Authorization": f"Bearer {login(client)}"})
+    v2_body = v2_response.get_json()
+    assert v2_response.status_code == 200 and v2_body["log_id"]
+    with database["engine"].connect() as connection:
+        v2_row = connection.execute(sa.text("SELECT generation_kind,prompt_template_version,brief_json,response_json,title,content FROM generation_logs WHERE id=:id"), {"id": v2_body["log_id"]}).mappings().one()
+    assert v2_row["generation_kind"] == "cultural_product"
+    assert v2_row["prompt_template_version"] == "cultural-product-v1"
+    assert json.loads(v2_row["brief_json"])["product_type"] == "书签"
+    assert json.loads(v2_row["response_json"])["product_name"] == "容器青花书签"
+    assert v2_row["title"] == "容器青花书签" and v2_row["content"] == "容器测试产品讲解"
+
+    with pytest.raises(RuntimeError, match="automatic destructive downgrade is not allowed"):
         command.downgrade(Config("alembic.ini"), "0001")
     post_downgrade_inspector = sa.inspect(database["engine"])
     assert post_downgrade_inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0002"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0003"
         assert connection.exec_driver_sql("SELECT COUNT(*) FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
         assert connection.exec_driver_sql("SELECT download_count FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
     assert post_downgrade_inspector.has_table("etl_batches")

@@ -41,6 +41,7 @@ def post_generation(app_module, client, monkeypatch, mysql_service, prompt="safe
     token = login(client)
     monkeypatch.setattr(app_module, "mysql_service", mysql_service)
     monkeypatch.setattr(app_module, "generate_content", lambda *_: ("https://example.invalid/image.png", "title", "content"))
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/test.png")
     monkeypatch.setattr(app_module, "log_event", lambda *_: True)
     monkeypatch.setattr("requests.get", lambda *_args, **_kwargs: StubImageResponse())
     return client.post(
