@@ -8,6 +8,11 @@ frontend/node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+# Runtime images are persisted locally for controlled business smoke evidence;
+# they are data, never source assets.
+static/images/image_*.png
+static/images/image_*.jpg
+static/images/image_*.webp
 desktop.ini
 **/__pycache__/
 *.py[cod]
