@@ -36,7 +36,14 @@ def log_event(event_type, data):
     try:
         with open(LOG_FILE, "a", encoding='utf-8') as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-        print(f"✅ 日志记录成功: {event_type}")
+        code = data.get("code")
+        stage = data.get("stage")
+        summary = f" event={event_type}"
+        if code:
+            summary += f" code={code}"
+        if stage:
+            summary += f" stage={stage}"
+        print(f"✅ 日志记录成功:{summary}")
         return True
     except Exception as e:
         print(f"❌ 日志记录失败: {e}")

@@ -192,6 +192,7 @@ class MySQLService:
             # 直接查询generation_logs表，不检查表是否存在
             history_query = """
             SELECT 
+                id AS log_id,
                 timestamp,
                 prompt,
                 style,
@@ -274,8 +275,16 @@ class MySQLService:
                             user_gender = int(item['user_gender'])
                         except (ValueError, TypeError):
                             user_gender = None
+
+                    log_id = None
+                    if item.get('log_id') is not None:
+                        try:
+                            log_id = int(item['log_id'])
+                        except (ValueError, TypeError):
+                            log_id = None
                     
                     processed_item = {
+                        'log_id': log_id,
                         'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
                         'prompt': str(item['prompt']) if item['prompt'] else '',
                         'style': str(item['style']) if item['style'] else '通用',

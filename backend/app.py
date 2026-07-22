@@ -6,7 +6,7 @@ import hmac
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -28,6 +28,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = current_dir
 project_root = os.path.dirname(backend_dir)
 frontend_dir = os.path.join(project_root, "frontend")
+REAL_BUSINESS_SMOKE_DATABASE = "aigc_platform_demo"
 
 print(f"📁 项目根目录: {project_root}")
 print(f"📁 前端目录: {frontend_dir}")
@@ -91,14 +92,67 @@ def verify_and_migrate_password(user, submitted_password):
     return True
 
 
+def current_request_id():
+    if not hasattr(g, "api_request_id"):
+        g.api_request_id = str(uuid.uuid4())
+    return g.api_request_id
+
+
 def api_error(code, message, status_code, retryable=False, unavailable=False):
     return jsonify({
         "status": "unavailable" if unavailable else "error",
         "code": code,
         "message": message,
-        "request_id": str(uuid.uuid4()),
+        "request_id": current_request_id(),
         "retryable": retryable,
     }), status_code
+
+
+def log_generation_failure(user_id, stage, code, error=None):
+    """Record only stable, non-content diagnostics for a generation failure."""
+    image_stage = stage in {"image_generation", "image_download"}
+    payload = {
+        "user_id": user_id,
+        "request_id": current_request_id(),
+        "code": code,
+        "stage": stage,
+        "model_name": getattr(aigc_service, "image_model" if image_stage else "text_model", None),
+        "endpoint_path": "/api/v1/services/aigc/multimodal-generation/generation" if image_stage else "/responses",
+    }
+    if error is not None:
+        payload["timeout_stage"] = error.timeout_stage
+        payload["provider_http_status"] = error.http_status
+        payload["provider_error_code"] = error.provider_error_code
+    log_event("error", payload)
+
+
+def public_model_error_message(code):
+    if code in {"MODEL_CONNECT_TIMEOUT", "MODEL_READ_TIMEOUT", "MODEL_REQUEST_TIMEOUT"}:
+        return "Generation service did not respond in time."
+    if code == "MODEL_RATE_LIMITED":
+        return "Generation service is temporarily busy."
+    if code == "MODEL_CONTENT_FILTERED":
+        return "Generation request could not be processed under content policy."
+    return "Generation service could not complete the request."
+
+
+def v2_generation_data_origin(user_info):
+    """Choose the persisted origin on the server; clients cannot supply it.
+
+    The explicit smoke flag is intentionally narrow: it only marks a request
+    as test data when the process targets the dedicated local demo database
+    and the authenticated principal is the configured smoke identity.
+    """
+    username = user_info.get("username")
+    is_controlled_smoke = (
+        settings.run_real_business_smoke
+        and settings.mysql_database == REAL_BUSINESS_SMOKE_DATABASE
+        and bool(settings.smoke_test_username)
+        and bool(settings.smoke_test_password)
+        and isinstance(username, str)
+        and hmac.compare_digest(username, settings.smoke_test_username)
+    )
+    return "test" if is_controlled_smoke else "production"
 
 # 加载用户数据
 users_data = load_users_data()
@@ -480,23 +534,29 @@ def generate_cultural_product_api():
         return api_error(error.code, error.message, 400)
 
     if mysql_service is None or not mysql_service.connect():
-        log_event('error', {'code': 'MYSQL_UNAVAILABLE', 'user_id': user_info.get('user_id')})
+        log_generation_failure(user_info.get("user_id"), "persistence", "MYSQL_UNAVAILABLE")
         return api_error("MYSQL_UNAVAILABLE", "Data service is temporarily unavailable.", 503, True, True)
 
     started_at = time.time()
     try:
         text_result = aigc_service.generate_cultural_product_text(brief)
-        image_prompt = build_image_prompt(brief, text_result['product_name'])
-        image_url = aigc_service.generate_image_from_prompt(image_prompt)
-        image_url = persist_generated_image(image_url, os.path.join(project_root, "static", "images"))
     except AIGCServiceError as error:
-        log_event('error', {'code': error.code, 'user_id': user_info.get('user_id')})
-        return api_error(error.code, error.message, 502, error.retryable)
+        stage = "text_parse" if error.code in {"MODEL_EMPTY_RESPONSE", "MODEL_INVALID_RESPONSE"} else "text_generation"
+        log_generation_failure(user_info.get("user_id"), stage, error.code, error)
+        return api_error(error.code, public_model_error_message(error.code), 502, error.retryable)
+    image_prompt = build_image_prompt(brief, text_result['product_name'])
+    try:
+        provider_image_url = aigc_service.generate_image_from_prompt(image_prompt)
+    except AIGCServiceError as error:
+        log_generation_failure(user_info.get("user_id"), "image_generation", error.code, error)
+        return api_error(error.code, public_model_error_message(error.code), 502, error.retryable)
+    try:
+        image_url = persist_generated_image(provider_image_url, os.path.join(project_root, "static", "images"))
     except ImagePersistenceError:
-        log_event('error', {'code': 'IMAGE_PERSIST_FAILED', 'user_id': user_info.get('user_id')})
+        log_generation_failure(user_info.get("user_id"), "image_download", "IMAGE_PERSIST_FAILED")
         return api_error("IMAGE_PERSIST_FAILED", "Generated image could not be saved.", 502, True)
     except Exception:
-        log_event('error', {'code': 'CULTURAL_PRODUCT_UNEXPECTED_ERROR', 'user_id': user_info.get('user_id')})
+        log_generation_failure(user_info.get("user_id"), "persistence", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
 
     factual = factual_background(brief)
@@ -538,15 +598,15 @@ def generate_cultural_product_api():
             user_id, 'generate', datetime.now().isoformat(), prompt_summary, style, image_url,
             text_result['product_name'], text_result['product_copy'], response_data['generation_time'],
             len(text_result['product_copy']), None, 0, age_value, gender_value,
-            user_data.get('last_login') if user_data else None, 'production', 'cultural_product',
+            user_data.get('last_login') if user_data else None, v2_generation_data_origin(user_info), 'cultural_product',
             PROMPT_TEMPLATE_VERSION, canonical_brief_json(brief), json.dumps(response_data, ensure_ascii=False, separators=(',', ':')),
         ))
     except Exception:
         log_id = None
     if log_id is None:
         if not remove_persisted_image(image_url, os.path.join(project_root, "static", "images")):
-            log_event('error', {'code': 'ORPHAN_IMAGE_CLEANUP_FAILED', 'user_id': user_id})
-        log_event('error', {'code': 'GENERATION_PERSIST_FAILED', 'user_id': user_id})
+            log_generation_failure(user_id, "persistence", "ORPHAN_IMAGE_CLEANUP_FAILED")
+        log_generation_failure(user_id, "persistence", "GENERATION_PERSIST_FAILED")
         return api_error("GENERATION_PERSIST_FAILED", "Generated content could not be persisted.", 503, True, True)
     response_data['log_id'] = log_id
     log_event('generate', {'user_id': user_id, 'generation_kind': 'cultural_product', 'log_id': log_id})
