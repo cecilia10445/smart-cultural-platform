@@ -216,6 +216,7 @@ except ImportError:
 from backend.domain.cultural_product_brief import BriefValidationError, canonical_brief_json, validate_cultural_product_request
 from backend.prompts.cultural_product_v1 import PROMPT_TEMPLATE_VERSION, build_image_prompt, factual_background
 from backend.services.image_storage import ImagePersistenceError, persist_generated_image, remove_persisted_image
+from backend.services.generation_tracking import GenerationTracker, TrackingPersistenceError
 
 # 路由定义
 @app.route('/')
@@ -537,25 +538,75 @@ def generate_cultural_product_api():
         log_generation_failure(user_info.get("user_id"), "persistence", "MYSQL_UNAVAILABLE")
         return api_error("MYSQL_UNAVAILABLE", "Data service is temporarily unavailable.", 503, True, True)
 
-    started_at = time.time()
+    data_origin = v2_generation_data_origin(user_info)
     try:
-        text_result = aigc_service.generate_cultural_product_text(brief)
+        tracker = GenerationTracker(mysql_service, current_request_id(), user_info["user_id"], data_origin, brief, PROMPT_TEMPLATE_VERSION)
+        tracker.start()
+    except TrackingPersistenceError as error:
+        log_generation_failure(user_info.get("user_id"), "persistence", str(error))
+        return api_error(str(error), "Generation tracking is temporarily unavailable.", 503, True, True)
+
+    def finish_tracking_failure(stage, code):
+        """Best-effort finalization: never replace the original business error."""
+        try:
+            tracker.fail(stage, code)
+        except TrackingPersistenceError:
+            log_generation_failure(user_info.get("user_id"), "persistence", "TRACKING_FINALIZE_FAILED")
+
+    started_at = time.time()
+    text_started = time.perf_counter()
+    try:
+        if hasattr(aigc_service, "generate_cultural_product_text_with_metadata"):
+            text_result, text_usage = aigc_service.generate_cultural_product_text_with_metadata(brief)
+        else:
+            text_result, text_usage = aigc_service.generate_cultural_product_text(brief), None
+        tracker.record_metric("text_generation", getattr(aigc_service, "text_model", None), "SUCCEEDED", text_started, usage=text_usage)
     except AIGCServiceError as error:
-        stage = "text_parse" if error.code in {"MODEL_EMPTY_RESPONSE", "MODEL_INVALID_RESPONSE"} else "text_generation"
+        stage = "text_parse" if error.code in {
+            "MODEL_EMPTY_RESPONSE", "MODEL_INVALID_RESPONSE", "MODEL_RESPONSE_INCOMPLETE", "MODEL_RESPONSE_REASONING_ONLY",
+        } else "text_generation"
+        try:
+            tracker.record_metric("text_generation", getattr(aigc_service, "text_model", None), "FAILED", text_started, error=error)
+            finish_tracking_failure(stage, error.code)
+        except TrackingPersistenceError:
+            finish_tracking_failure("persistence", "TRACKING_METRIC_PERSIST_FAILED")
         log_generation_failure(user_info.get("user_id"), stage, error.code, error)
         return api_error(error.code, public_model_error_message(error.code), 502, error.retryable)
+    except TrackingPersistenceError as error:
+        finish_tracking_failure("persistence", str(error))
+        return api_error(str(error), "Generation tracking is temporarily unavailable.", 503, True, True)
+    except Exception:
+        finish_tracking_failure("text_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        log_generation_failure(user_info.get("user_id"), "text_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
     image_prompt = build_image_prompt(brief, text_result['product_name'])
+    image_started = time.perf_counter()
     try:
         provider_image_url = aigc_service.generate_image_from_prompt(image_prompt)
+        tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "SUCCEEDED", image_started, image_count=1)
     except AIGCServiceError as error:
+        try:
+            tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "FAILED", image_started, error=error)
+            finish_tracking_failure("image_generation", error.code)
+        except TrackingPersistenceError:
+            finish_tracking_failure("persistence", "TRACKING_METRIC_PERSIST_FAILED")
         log_generation_failure(user_info.get("user_id"), "image_generation", error.code, error)
         return api_error(error.code, public_model_error_message(error.code), 502, error.retryable)
+    except TrackingPersistenceError as error:
+        finish_tracking_failure("persistence", str(error))
+        return api_error(str(error), "Generation tracking is temporarily unavailable.", 503, True, True)
+    except Exception:
+        finish_tracking_failure("image_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        log_generation_failure(user_info.get("user_id"), "image_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
     try:
         image_url = persist_generated_image(provider_image_url, os.path.join(project_root, "static", "images"))
     except ImagePersistenceError:
+        finish_tracking_failure("image_download", "IMAGE_PERSIST_FAILED")
         log_generation_failure(user_info.get("user_id"), "image_download", "IMAGE_PERSIST_FAILED")
         return api_error("IMAGE_PERSIST_FAILED", "Generated image could not be saved.", 502, True)
     except Exception:
+        finish_tracking_failure("persistence", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         log_generation_failure(user_info.get("user_id"), "persistence", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
 
@@ -598,7 +649,7 @@ def generate_cultural_product_api():
             user_id, 'generate', datetime.now().isoformat(), prompt_summary, style, image_url,
             text_result['product_name'], text_result['product_copy'], response_data['generation_time'],
             len(text_result['product_copy']), None, 0, age_value, gender_value,
-            user_data.get('last_login') if user_data else None, v2_generation_data_origin(user_info), 'cultural_product',
+            user_data.get('last_login') if user_data else None, data_origin, 'cultural_product',
             PROMPT_TEMPLATE_VERSION, canonical_brief_json(brief), json.dumps(response_data, ensure_ascii=False, separators=(',', ':')),
         ))
     except Exception:
@@ -607,8 +658,17 @@ def generate_cultural_product_api():
         if not remove_persisted_image(image_url, os.path.join(project_root, "static", "images")):
             log_generation_failure(user_id, "persistence", "ORPHAN_IMAGE_CLEANUP_FAILED")
         log_generation_failure(user_id, "persistence", "GENERATION_PERSIST_FAILED")
+        finish_tracking_failure("persistence", "GENERATION_PERSIST_FAILED")
         return api_error("GENERATION_PERSIST_FAILED", "Generated content could not be persisted.", 503, True, True)
+    try:
+        tracker.succeed(log_id)
+    except TrackingPersistenceError as error:
+        log_generation_failure(user_id, "persistence", str(error))
+        # The user-visible generation is already durable.  Do not turn it into
+        # a retryable failure and accidentally create a duplicate generation.
+        # The attempt remains RUNNING and is reported as tracking-incomplete.
     response_data['log_id'] = log_id
+    response_data['request_id'] = current_request_id()
     log_event('generate', {'user_id': user_id, 'generation_kind': 'cultural_product', 'log_id': log_id})
     return jsonify(response_data)
 
