@@ -128,7 +128,7 @@ def authenticate_user():
 
 # 导入服务（放在认证函数之后）
 try:
-    from backend.services.aigc_service import AIGCServiceError, generate_content
+    from backend.services.aigc_service import AIGCServiceError, aigc_service, generate_content
     print("✅ 成功导入AIGC服务")
 except ImportError as e:
     raise RuntimeError("AIGC service could not be imported") from e
@@ -158,6 +158,10 @@ except ImportError:
     def log_event(event_type, data):
         timestamp = datetime.now().isoformat()
         print(f"📝 [{timestamp}] {event_type}: {data}")
+
+from backend.domain.cultural_product_brief import BriefValidationError, canonical_brief_json, validate_cultural_product_request
+from backend.prompts.cultural_product_v1 import PROMPT_TEMPLATE_VERSION, build_image_prompt, factual_background
+from backend.services.image_storage import ImagePersistenceError, persist_generated_image, remove_persisted_image
 
 # 路由定义
 @app.route('/')
@@ -360,36 +364,11 @@ def generate_content_api():
             return api_error(error.code, error.message, 502, error.retryable)
         generation_time = round(time.time() - start_time, 2)
 
-        # ==================== 插入图片保存代码开始 ====================
-        local_image_url = image_url  # 默认使用原始URL
-        
         try:
-            # 下载图片
-            import requests
-            response = requests.get(image_url, timeout=30)
-            if response.status_code == 200:
-                # 生成唯一文件名
-                import hashlib
-                filename_hash = hashlib.md5(f"{user_info['user_id']}_{prompt}_{int(time.time())}".encode()).hexdigest()[:10]
-                local_filename = f"image_{filename_hash}.png"
-                local_path = os.path.join(project_root, "static", "images", local_filename)
-                
-                # 确保目录存在
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                
-                # 保存图片
-                with open(local_path, 'wb') as f:
-                    f.write(response.content)
-                
-                # 使用本地路径
-                local_image_url = f"/static/images/{local_filename}"
-                print(f"✅ 图片已保存到本地: {local_path}")
-                
-            else:
-                print(f"⚠️ 图片下载失败: {response.status_code}")
-        except Exception as e:
-            print(f"⚠️ 图片保存失败: {e}")
-        # ==================== 插入图片保存代码结束 ====================
+            local_image_url = persist_generated_image(image_url, os.path.join(project_root, "static", "images"))
+        except ImagePersistenceError:
+            log_event('error', {'code': 'IMAGE_PERSIST_FAILED', 'user_id': user_info.get('user_id')})
+            return api_error("IMAGE_PERSIST_FAILED", "Generated image could not be saved.", 502, True)
 
         # 获取用户完整信息（包含年龄性别）
         user_id = user_info['user_id']
@@ -458,6 +437,8 @@ def generate_content_api():
             mysql_record_id = None
 
         if mysql_record_id is None:
+            if not remove_persisted_image(local_image_url, os.path.join(project_root, "static", "images")):
+                log_event('error', {'code': 'ORPHAN_IMAGE_CLEANUP_FAILED', 'user_id': user_id})
             log_event('error', {'code': 'GENERATION_PERSIST_FAILED', 'user_id': user_id})
             return api_error(
                 "GENERATION_PERSIST_FAILED",
@@ -485,6 +466,91 @@ def generate_content_api():
         print(f"❌ {error_msg}")
         log_event('error', {'error': error_msg, 'user_id': user_info.get('user_id')})
         return jsonify({'status': 'error', 'message': error_msg}), 500
+
+
+@app.route('/api/v2/cultural-products/generate', methods=['POST'])
+def generate_cultural_product_api():
+    """Versioned cultural-product workflow; legacy /api/generate remains unchanged."""
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before generating.", 401)
+    try:
+        brief = validate_cultural_product_request(request.get_json(silent=True))
+    except BriefValidationError as error:
+        return api_error(error.code, error.message, 400)
+
+    if mysql_service is None or not mysql_service.connect():
+        log_event('error', {'code': 'MYSQL_UNAVAILABLE', 'user_id': user_info.get('user_id')})
+        return api_error("MYSQL_UNAVAILABLE", "Data service is temporarily unavailable.", 503, True, True)
+
+    started_at = time.time()
+    try:
+        text_result = aigc_service.generate_cultural_product_text(brief)
+        image_prompt = build_image_prompt(brief, text_result['product_name'])
+        image_url = aigc_service.generate_image_from_prompt(image_prompt)
+        image_url = persist_generated_image(image_url, os.path.join(project_root, "static", "images"))
+    except AIGCServiceError as error:
+        log_event('error', {'code': error.code, 'user_id': user_info.get('user_id')})
+        return api_error(error.code, error.message, 502, error.retryable)
+    except ImagePersistenceError:
+        log_event('error', {'code': 'IMAGE_PERSIST_FAILED', 'user_id': user_info.get('user_id')})
+        return api_error("IMAGE_PERSIST_FAILED", "Generated image could not be saved.", 502, True)
+    except Exception:
+        log_event('error', {'code': 'CULTURAL_PRODUCT_UNEXPECTED_ERROR', 'user_id': user_info.get('user_id')})
+        return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
+
+    factual = factual_background(brief)
+    response_data = {
+        'status': 'success',
+        'generation_kind': 'cultural_product',
+        'prompt_template_version': PROMPT_TEMPLATE_VERSION,
+        'product_name': text_result['product_name'],
+        'factual_background': factual,
+        'design_interpretation': text_result['design_interpretation'],
+        'product_copy': text_result['product_copy'],
+        'image_prompt': image_prompt,
+        'image_url': image_url,
+        'generation_time': round(time.time() - started_at, 2),
+    }
+    direction = brief['visual_direction']
+    style = '；'.join(value for value in (
+        direction['cultural_context'], direction['medium'], direction['palette'], direction['composition'], direction['additional_requirements'],
+    ) if value)
+    source = brief['cultural_source']
+    prompt_summary = f"{brief['product_type']}：{source['name']}"
+    user_id = user_info['user_id']
+    user_data = next((item for item in users_data['users'] + users_data['admins'] if item['user_id'] == user_id), None)
+    age_range = user_data.get('age_range') if user_data else None
+    try:
+        age_value = int(age_range.split('-', 1)[0]) if isinstance(age_range, str) else None
+    except ValueError:
+        age_value = None
+    gender_value = 1 if user_data and user_data.get('gender') == 'male' else 0 if user_data and user_data.get('gender') == 'female' else None
+    insert_query = """
+        INSERT INTO generation_logs
+        (user_id, event_type, timestamp, prompt, style, image_url, title, content, generation_time,
+         content_length, user_rating, download_count, user_age, user_gender, login_time, data_origin,
+         generation_kind, prompt_template_version, brief_json, response_json)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    try:
+        log_id = mysql_service.execute_insert(insert_query, (
+            user_id, 'generate', datetime.now().isoformat(), prompt_summary, style, image_url,
+            text_result['product_name'], text_result['product_copy'], response_data['generation_time'],
+            len(text_result['product_copy']), None, 0, age_value, gender_value,
+            user_data.get('last_login') if user_data else None, 'production', 'cultural_product',
+            PROMPT_TEMPLATE_VERSION, canonical_brief_json(brief), json.dumps(response_data, ensure_ascii=False, separators=(',', ':')),
+        ))
+    except Exception:
+        log_id = None
+    if log_id is None:
+        if not remove_persisted_image(image_url, os.path.join(project_root, "static", "images")):
+            log_event('error', {'code': 'ORPHAN_IMAGE_CLEANUP_FAILED', 'user_id': user_id})
+        log_event('error', {'code': 'GENERATION_PERSIST_FAILED', 'user_id': user_id})
+        return api_error("GENERATION_PERSIST_FAILED", "Generated content could not be persisted.", 503, True, True)
+    response_data['log_id'] = log_id
+    log_event('generate', {'user_id': user_id, 'generation_kind': 'cultural_product', 'log_id': log_id})
+    return jsonify(response_data)
 
 # 运营数据接口（需要管理员权限）
 @app.route('/api/dashboard/stats', methods=['GET'])

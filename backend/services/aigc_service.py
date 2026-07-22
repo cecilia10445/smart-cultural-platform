@@ -3,6 +3,8 @@ import time
 
 import requests
 
+from backend.prompts.cultural_product_v1 import build_text_messages, validate_text_response
+
 try:
     from config import load_settings
 except ImportError:
@@ -52,6 +54,24 @@ class AIGCService:
             raise AIGCServiceError("MODEL_EMPTY_RESPONSE", "Text model returned an empty response.")
         return self.parse_text_content(raw_content)
 
+    def generate_cultural_product_text(self, brief):
+        """Generate only creative fields; factual background is built server-side."""
+        payload = {
+            "model": "qwen-turbo",
+            "input": {"messages": build_text_messages(brief)},
+            "parameters": {"max_tokens": 500, "temperature": 0.4},
+        }
+        response = self._post(self.text_api_url, self._headers(), payload, self.settings.dashscope_text_timeout_seconds, "TEXT")
+        try:
+            raw_content = response.json().get("output", {}).get("text", "").strip()
+        except (ValueError, AttributeError) as exc:
+            raise AIGCServiceError("MODEL_INVALID_RESPONSE", "Text model returned invalid JSON.") from exc
+        try:
+            return validate_text_response(raw_content)
+        except ValueError as exc:
+            code = str(exc) if str(exc) in {"MODEL_INVALID_RESPONSE", "MODEL_EMPTY_RESPONSE"} else "MODEL_INVALID_RESPONSE"
+            raise AIGCServiceError(code, "Text model returned an invalid cultural-product response.") from exc
+
     def _text_prompt(self, prompt, style):
         return (
             "Generate a JSON object with title and content for the following creative request. "
@@ -72,6 +92,13 @@ class AIGCService:
 
     def generate_image(self, prompt, style):
         payload = {"model": "wanx-v1", "input": {"prompt": f"{prompt}, {style} style"}, "parameters": {"size": "1024*1024", "n": 1}}
+        return self._generate_image_payload(payload)
+
+    def generate_image_from_prompt(self, image_prompt):
+        payload = {"model": "wanx-v1", "input": {"prompt": image_prompt}, "parameters": {"size": "1024*1024", "n": 1}}
+        return self._generate_image_payload(payload)
+
+    def _generate_image_payload(self, payload):
         response = self._post(self.image_api_url, self._headers(True), payload, self.settings.dashscope_image_timeout_seconds, "IMAGE")
         try:
             task_id = response.json().get("output", {}).get("task_id")
