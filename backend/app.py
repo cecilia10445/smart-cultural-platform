@@ -215,8 +215,22 @@ except ImportError:
 
 from backend.domain.cultural_product_brief import BriefValidationError, canonical_brief_json, validate_cultural_product_request
 from backend.prompts.cultural_product_v1 import PROMPT_TEMPLATE_VERSION, build_image_prompt, factual_background
+from backend.rag.corpus_loader import CorpusUnavailable
+from backend.rag.service import CulturalRagService
 from backend.services.image_storage import ImagePersistenceError, persist_generated_image, remove_persisted_image
 from backend.services.generation_tracking import GenerationTracker, TrackingPersistenceError
+
+_cultural_rag_service = None
+
+
+def get_cultural_rag_service():
+    """Initialize the frozen local corpus lazily so app import stays recoverable."""
+    global _cultural_rag_service
+    if _cultural_rag_service is None:
+        corpus_root = os.path.join(project_root, "rag", "corpus", "met_open_access")
+        _cultural_rag_service = CulturalRagService(corpus_root)
+    return _cultural_rag_service
+
 
 # 路由定义
 @app.route('/')
@@ -553,14 +567,71 @@ def generate_cultural_product_api():
         except TrackingPersistenceError:
             log_generation_failure(user_info.get("user_id"), "persistence", "TRACKING_FINALIZE_FAILED")
 
+    try:
+        rag_service = get_cultural_rag_service()
+        retrieval = rag_service.retrieve(brief)
+        retrieval_context = {
+            "status": retrieval.status,
+            "evidence": rag_service.evidence_block(retrieval),
+        }
+    except CorpusUnavailable:
+        finish_tracking_failure("retrieval", "RAG_UNAVAILABLE")
+        log_generation_failure(user_info.get("user_id"), "retrieval", "RAG_UNAVAILABLE")
+        return api_error("RAG_UNAVAILABLE", "Cultural reference data is temporarily unavailable.", 503, True, True)
+    except Exception:
+        finish_tracking_failure("retrieval", "RAG_RETRIEVAL_FAILED")
+        log_generation_failure(user_info.get("user_id"), "retrieval", "RAG_RETRIEVAL_FAILED")
+        return api_error("RAG_RETRIEVAL_FAILED", "Cultural reference retrieval could not be completed.", 503, True, True)
+
     started_at = time.time()
     text_started = time.perf_counter()
     try:
-        if hasattr(aigc_service, "generate_cultural_product_text_with_metadata"):
+        if hasattr(aigc_service, "generate_cultural_product_text_with_evidence"):
+            text_result, text_usage = aigc_service.generate_cultural_product_text_with_evidence(
+                brief,
+                retrieval_context,
+            )
+            verified_sources = rag_service.verified_sources(
+                retrieval,
+                text_result.get("used_source_ids"),
+                text_result.get("evidence_status"),
+            )
+        elif hasattr(aigc_service, "generate_cultural_product_text_with_metadata"):
             text_result, text_usage = aigc_service.generate_cultural_product_text_with_metadata(brief)
+            verified_sources = []
+            text_result = {
+                **text_result,
+                "factual_background": "；".join(brief["confirmed_facts"]),
+                "used_source_ids": [],
+                "evidence_status": "insufficient_evidence",
+            }
         else:
             text_result, text_usage = aigc_service.generate_cultural_product_text(brief), None
+            verified_sources = []
+            text_result = {
+                **text_result,
+                "factual_background": "；".join(brief["confirmed_facts"]),
+                "used_source_ids": [],
+                "evidence_status": "insufficient_evidence",
+            }
         tracker.record_metric("text_generation", getattr(aigc_service, "text_model", None), "SUCCEEDED", text_started, usage=text_usage)
+    except ValueError:
+        try:
+            tracker.record_metric(
+                "text_generation",
+                getattr(aigc_service, "text_model", None),
+                "FAILED",
+                text_started,
+            )
+            finish_tracking_failure("text_parse", "MODEL_INVALID_CITATIONS")
+        except TrackingPersistenceError:
+            finish_tracking_failure("persistence", "TRACKING_METRIC_PERSIST_FAILED")
+        log_generation_failure(user_info.get("user_id"), "text_parse", "MODEL_INVALID_CITATIONS")
+        return api_error(
+            "MODEL_INVALID_CITATIONS",
+            "Generated source references were invalid.",
+            502,
+        )
     except AIGCServiceError as error:
         stage = "text_parse" if error.code in {
             "MODEL_EMPTY_RESPONSE", "MODEL_INVALID_RESPONSE", "MODEL_RESPONSE_INCOMPLETE", "MODEL_RESPONSE_REASONING_ONLY",
@@ -610,13 +681,20 @@ def generate_cultural_product_api():
         log_generation_failure(user_info.get("user_id"), "persistence", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
 
-    factual = factual_background(brief)
+    factual = factual_background(
+        brief,
+        text_result["factual_background"],
+        verified_sources,
+        text_result["evidence_status"],
+    )
     response_data = {
         'status': 'success',
         'generation_kind': 'cultural_product',
         'prompt_template_version': PROMPT_TEMPLATE_VERSION,
         'product_name': text_result['product_name'],
         'factual_background': factual,
+        'evidence_status': factual['status'],
+        'used_source_ids': [source['source_id'] for source in verified_sources],
         'design_interpretation': text_result['design_interpretation'],
         'product_copy': text_result['product_copy'],
         'image_prompt': image_prompt,

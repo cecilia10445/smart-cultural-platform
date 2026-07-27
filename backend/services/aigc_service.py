@@ -102,8 +102,15 @@ class AIGCService:
         return result
 
     def generate_cultural_product_text_with_metadata(self, brief):
-        """Generate creative fields only; factual background remains server-side."""
-        raw_content, usage = self._request_text(build_text_messages(brief), 500)
+        """Generate the structured contract without official RAG evidence."""
+        return self.generate_cultural_product_text_with_evidence(
+            brief,
+            {"status": "insufficient_evidence", "evidence": []},
+        )
+
+    def generate_cultural_product_text_with_evidence(self, brief, retrieval_context):
+        """Generate the structured contract from an explicit frozen-evidence boundary."""
+        raw_content, usage = self._request_text(build_text_messages(brief, retrieval_context), 700)
         try:
             return validate_text_response(raw_content), usage
         except ValueError as exc:

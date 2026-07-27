@@ -54,7 +54,7 @@ def cultural_response():
     return FakeResponse({
         "status": "completed", "model": "qwen3.7-plus",
         "output": [{"type": "message", "status": "completed", "content": [{
-            "type": "output_text", "text": '{"product_name":"青花书签","design_interpretation":"纹样转译","product_copy":"一枚书签"}',
+            "type": "output_text", "text": '{"product_name":"青花书签","factual_background":"当前资料不足","design_interpretation":"纹样转译","product_copy":"一枚书签","used_source_ids":[],"evidence_status":"insufficient_evidence"}',
         }]}],
         "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
     })
@@ -84,7 +84,7 @@ def test_sdk_text_contract_uses_none_reasoning_and_no_tools():
     assert request["model"] == "qwen3.7-plus"
     assert request["reasoning"] == {"effort": "none"}
     assert request["temperature"] == 0.4 and request["stream"] is False
-    assert request["max_output_tokens"] == 500
+    assert request["max_output_tokens"] == 700
     assert [item["role"] for item in request["input"]] == ["system", "user"]
     assert "enable_thinking" not in request and "tools" not in request and "tool_choice" not in request
 

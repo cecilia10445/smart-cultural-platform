@@ -184,8 +184,18 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
         restricted_connection.close()
 
     class CulturalProductModelStub:
-        def generate_cultural_product_text(self, _brief):
-            return {"product_name": "容器青花书签", "design_interpretation": "容器测试设计解读", "product_copy": "容器测试产品讲解"}
+        def generate_cultural_product_text_with_evidence(self, _brief, retrieval_context):
+            assert retrieval_context["status"] == "grounded"
+            assert [item["source_id"] for item in retrieval_context["evidence"]] == ["met-39666"]
+            assert "retrieval_aliases" not in json.dumps(retrieval_context, ensure_ascii=False)
+            return {
+                "product_name": "容器青花书签",
+                "factual_background": "馆藏罐为透明釉下钴蓝彩绘瓷器。",
+                "design_interpretation": "容器测试设计解读",
+                "product_copy": "容器测试产品讲解",
+                "used_source_ids": ["met-39666"],
+                "evidence_status": "grounded",
+            }, {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}
 
         def generate_image_from_prompt(self, _image_prompt):
             return "https://example.invalid/v2.png"
@@ -205,16 +215,31 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     with database["engine"].connect() as connection:
         v2_row = connection.execute(sa.text("SELECT generation_kind,prompt_template_version,brief_json,response_json,title,content FROM generation_logs WHERE id=:id"), {"id": v2_body["log_id"]}).mappings().one()
     assert v2_row["generation_kind"] == "cultural_product"
-    assert v2_row["prompt_template_version"] == "cultural-product-v1"
+    assert v2_row["prompt_template_version"] == "cultural-product-rag-v1"
     assert json.loads(v2_row["brief_json"])["product_type"] == "书签"
-    assert json.loads(v2_row["response_json"])["product_name"] == "容器青花书签"
+    persisted_response = json.loads(v2_row["response_json"])
+    assert persisted_response["product_name"] == "容器青花书签"
+    assert persisted_response["evidence_status"] == "grounded"
+    assert persisted_response["used_source_ids"] == ["met-39666"]
+    assert persisted_response["factual_background"] == {
+        "status": "grounded",
+        "text": "馆藏罐为透明釉下钴蓝彩绘瓷器。",
+        "evidence_mode": "frozen_official_sources",
+        "citations": [{
+            "source_id": "met-39666",
+            "title": "Jar with dragon",
+            "source_url": "https://www.metmuseum.org/art/collection/search/39666",
+            "license": "CC0-1.0",
+        }],
+    }
     assert v2_row["title"] == "容器青花书签" and v2_row["content"] == "容器测试产品讲解"
     with database["engine"].connect() as connection:
         attempt = connection.execute(sa.text("SELECT request_id,status,generation_log_id,brief_sha256 FROM generation_attempts WHERE generation_log_id=:id"), {"id": v2_body["log_id"]}).mappings().one()
         metrics = connection.execute(sa.text("SELECT stage,status,input_tokens,output_tokens,total_tokens,image_count FROM model_call_metrics WHERE request_id=:request_id ORDER BY id"), {"request_id": attempt["request_id"]}).mappings().all()
     assert attempt["status"] == "SUCCEEDED" and len(attempt["brief_sha256"]) == 64
     assert [(row["stage"], row["status"]) for row in metrics] == [("text_generation", "SUCCEEDED"), ("image_generation", "SUCCEEDED")]
-    assert metrics[0]["input_tokens"] is None and metrics[1]["image_count"] == 1
+    assert (metrics[0]["input_tokens"], metrics[0]["output_tokens"], metrics[0]["total_tokens"]) == (12, 8, 20)
+    assert metrics[1]["image_count"] == 1
 
     with pytest.raises(RuntimeError, match="generation attempt tracking downgrade is disabled"):
         command.downgrade(Config("alembic.ini"), "0001")
