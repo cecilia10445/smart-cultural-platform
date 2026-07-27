@@ -1,0 +1,14 @@
+{
+  "name": "smart-cultural-platform-promptfoo-evaluation",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Offline Stub evaluation for cultural-product-rag-v1",
+  "scripts": {
+    "validate": "PROMPTFOO_CONFIG_DIR=/tmp/smart-cultural-promptfoo PROMPTFOO_DISABLE_TELEMETRY=true promptfoo validate config -c promptfooconfig.yaml",
+    "eval:stub": "mkdir -p ../artifacts /tmp/smart-cultural-promptfoo && PROMPTFOO_CONFIG_DIR=/tmp/smart-cultural-promptfoo PROMPTFOO_DISABLE_TELEMETRY=true promptfoo eval -c promptfooconfig.yaml --no-cache --no-share --no-progress-bar --no-table -o ../artifacts/round-15-results.json ../artifacts/round-15-report.html ../artifacts/round-15-junit.xml",
+    "verify:failure-exit": "if PROMPTFOO_CONFIG_DIR=/tmp/smart-cultural-promptfoo PROMPTFOO_DISABLE_TELEMETRY=true promptfoo eval -c failure-promptfooconfig.yaml --no-cache --no-share --no-progress-bar --no-table; then echo 'expected Promptfoo failure'; exit 1; else exit 0; fi"
+  },
+  "devDependencies": {
+    "promptfoo": "0.121.19"
+  }
+}

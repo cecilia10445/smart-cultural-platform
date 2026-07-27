@@ -8,6 +8,8 @@ frontend/node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+evaluation/artifacts/
+evaluation/promptfoo/node_modules/
 # Runtime images are persisted locally for controlled business smoke evidence;
 # they are data, never source assets.
 static/images/image_*.png

@@ -1,0 +1,13 @@
+description: Intentional Promptfoo failure used to verify non-zero command exit
+providers:
+  - id: file://provider.py
+    config:
+      executor_type: stub
+prompts:
+  - "{{case_id}}"
+tests:
+  - description: intentional-failure
+    vars: { case_id: blue-white-bookmark }
+    assert:
+      - type: contains
+        value: this value can never be in the offline response

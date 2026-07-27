@@ -1,0 +1,56 @@
+description: Round 15 offline cultural-product-rag-v1 Stub evaluation
+providers:
+  - id: file://provider.py
+    label: cultural-product-v2-offline-stub
+    config:
+      executor_type: stub
+      data_origin: test
+      measurement_scope: harness_self_test
+prompts:
+  - "{{case_id}}"
+defaultTest:
+  assert:
+    - type: is-json
+      metric: valid_json
+    - type: is-json
+      metric: response_schema
+      value:
+        type: object
+        required:
+          - product_name
+          - factual_background
+          - design_interpretation
+          - product_copy
+          - used_source_ids
+          - evidence_status
+          - citations
+          - available_source_ids
+          - prompt_template_version
+          - evaluation_metadata
+    - type: latency
+      metric: harness_latency_under_5s
+      threshold: 5000
+    - type: python
+      metric: verified_rag_boundary
+      value: file://assertions.py
+tests:
+  - description: blue-white-bookmark
+    vars: { case_id: blue-white-bookmark }
+  - description: dunhuang-teaware
+    vars: { case_id: dunhuang-teaware }
+  - description: dragon-boat-sachet
+    vars: { case_id: dragon-boat-sachet }
+  - description: heritage-packaging
+    vars: { case_id: heritage-packaging }
+  - description: unknown
+    vars: { case_id: unknown }
+  - description: no-confirmed-facts
+    vars: { case_id: no-confirmed-facts }
+  - description: special
+    vars: { case_id: special }
+  - description: injection
+    vars: { case_id: injection }
+  - description: endorsement
+    vars: { case_id: endorsement }
+  - description: relation
+    vars: { case_id: relation }
