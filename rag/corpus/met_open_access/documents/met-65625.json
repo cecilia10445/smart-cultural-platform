@@ -1,0 +1,24 @@
+{
+  "source_id": "met-65625",
+  "category": "landscape_painting",
+  "objectID": 65625,
+  "title": "Landscape",
+  "objectName": "Album leaf",
+  "culture": "China",
+  "period": "Qing dynasty (1644–1911)",
+  "dynasty": "",
+  "date": "datable to 1645–55",
+  "medium": "Double album leaf from a collective album of twelve paintings and facing pages of calligraphy; ink and color on paper",
+  "dimensions": "Image: 9 3/4 × 13 in. (24.8 × 33 cm)\r\nOverall (open): 26 1/2 × 18 in. (67.3 × 45.7 cm)",
+  "classification": "Paintings",
+  "department": "Asian Art",
+  "objectURL": "https://www.metmuseum.org/art/collection/search/65625",
+  "source_url": "https://collectionapi.metmuseum.org/public/collection/v1/objects/65625",
+  "license": "CC0-1.0",
+  "retrieved_at": "2026-07-22T14:31:02.288175+00:00",
+  "source_sha256": "1da3b0a1ca576aa971bd9f89b29ca3f84101ef738e743c8eb8754e015fa35ab9",
+  "retrieval_aliases": {
+    "value": [],
+    "provenance": "project_editorial_metadata"
+  }
+}

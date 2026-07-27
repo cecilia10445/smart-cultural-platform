@@ -4,7 +4,7 @@
 
 ## 当前技术边界
 
-项目保持 Flask、Vue、MySQL、Hive 和 PySpark。当前明确不引入 Redis、Celery、PostgreSQL、pgvector、FastAPI、多 Agent、RAG 或 LoRA。在线生成仍是 Flask 同步调用模型并写入 MySQL 的路径；模型供应商自身的图片任务轮询不等同于项目异步任务系统。
+项目保持 Flask、Vue、MySQL、Hive 和 PySpark。当前明确不引入 Redis、Celery、PostgreSQL、pgvector、FastAPI、多 Agent、通用 RAG 平台或 LoRA。Round 14A 仅加入六件冻结 Met Open Access 对象的进程内 BM25，用于 v2 文创接口的可解释引用闭环，不扩展为实时检索或向量数据库。在线生成仍是 Flask 同步调用模型并写入 MySQL 的路径；模型供应商自身的图片任务轮询不等同于项目异步任务系统。
 
 ## 已完成基础工作（Round 03–09）
 
@@ -26,4 +26,4 @@ Round 10 才实现并验证 MySQL→Hive ODS→PySpark 聚合→受控 MySQL 统
 
 ## 已废弃历史提案
 
-早期文档曾提出 Redis/Celery、202 任务接口、Worker、`generation_task`、幂等键和 RAG/Agent 等方案。这些不是当前路线，也未在仓库中实现；不应据此声称项目具备异步任务系统。任何未来架构变化必须单独立项并更新本计划。
+早期文档曾提出 Redis/Celery、202 任务接口、Worker、`generation_task`、幂等键和通用 RAG/Agent 等方案。这些不是当前路线，也未在仓库中实现；Round 14A 的冻结小语料检索不改变这一架构边界。不应据此声称项目具备异步任务系统或通用知识库。任何未来架构变化必须单独立项并更新本计划。

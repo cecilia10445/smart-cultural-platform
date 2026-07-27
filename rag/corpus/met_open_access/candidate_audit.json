@@ -1,0 +1,188 @@
+[
+  {
+    "category": "blue_white_porcelain",
+    "object_id": 39666,
+    "discovery_method": "api_search",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Ceramics",
+      "objectName": "Jar",
+      "medium": "Porcelain painted with cobalt blue under transparent glaze (Jingdezhen ware)",
+      "title": "Jar with dragon",
+      "objectDate": "early 15th century",
+      "period": "Ming dynasty (1368–1644), Xuande mark and period (1426–35)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/39666"
+    }
+  },
+  {
+    "category": "landscape_painting",
+    "object_id": 65625,
+    "discovery_method": "api_search",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Paintings",
+      "objectName": "Album leaf",
+      "medium": "Double album leaf from a collective album of twelve paintings and facing pages of calligraphy; ink and color on paper",
+      "title": "Landscape",
+      "objectDate": "datable to 1645–55",
+      "period": "Qing dynasty (1644–1911)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/65625"
+    }
+  },
+  {
+    "category": "calligraphy",
+    "object_id": 36003,
+    "discovery_method": "curated_seed",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Calligraphy",
+      "objectName": "Folding fan mounted as an album leaf",
+      "medium": "Folding fan mounted as an album leaf; ink on gold paper",
+      "title": "Calligraphy",
+      "objectDate": "",
+      "period": "Ming dynasty (1368–1644)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/36003"
+    }
+  },
+  {
+    "category": "bronze_ritual_vessel",
+    "object_id": 76974,
+    "discovery_method": "api_search",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Metalwork",
+      "objectName": "Altar set",
+      "medium": "Bronze",
+      "title": "Ritual Altar Set",
+      "objectDate": "late 11th century BCE",
+      "period": "Shang dynasty–Western Zhou dynasty (1046–771 BCE)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/76974"
+    }
+  },
+  {
+    "category": "silk_textile",
+    "object_id": 42379,
+    "discovery_method": "api_search",
+    "accepted": false,
+    "rejection_reasons": [
+      "CATEGORY_MISMATCH"
+    ],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Tomb Pottery",
+      "objectName": "Figure",
+      "medium": "Earthenware with three-color (sancai) glaze and pigment",
+      "title": "Horse and female rider",
+      "objectDate": "late 7th–first half of the 8th century",
+      "period": "Tang dynasty (618–907)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/42379"
+    }
+  },
+  {
+    "category": "silk_textile",
+    "object_id": 51777,
+    "discovery_method": "api_search",
+    "accepted": false,
+    "rejection_reasons": [
+      "CATEGORY_MISMATCH"
+    ],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Paintings",
+      "objectName": "Hanging scroll",
+      "medium": "Hanging scroll; ink and color on silk",
+      "title": "Flowering Branches",
+      "objectDate": "",
+      "period": "Qing dynasty (1644–1911), Qianlong period (1736–95)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/51777"
+    }
+  },
+  {
+    "category": "silk_textile",
+    "object_id": 40055,
+    "discovery_method": "api_search",
+    "accepted": false,
+    "rejection_reasons": [
+      "CATEGORY_MISMATCH"
+    ],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Paintings",
+      "objectName": "Hanging scroll",
+      "medium": "Hanging scroll; ink, color, and gold on silk",
+      "title": "Emperor Xuanzong's flight to Shu",
+      "objectDate": "mid-12th century",
+      "period": "Southern Song dynasty (1127–1279)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/40055"
+    }
+  },
+  {
+    "category": "silk_textile",
+    "object_id": 51486,
+    "discovery_method": "api_search",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Textiles-Tapestries",
+      "objectName": "Kesi",
+      "medium": "Silk tapestry (kesi)",
+      "title": "Calligraphy Couplet",
+      "objectDate": "19th century",
+      "period": "Qing dynasty (1644–1911)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/51486"
+    }
+  },
+  {
+    "category": "buddhist_sculpture",
+    "object_id": 61549,
+    "discovery_method": "api_search",
+    "accepted": true,
+    "rejection_reasons": [],
+    "fields": {
+      "department": "Asian Art",
+      "culture": "China",
+      "country": "",
+      "classification": "Sculpture",
+      "objectName": "Figure",
+      "medium": "Marble",
+      "title": "Buddha",
+      "objectDate": "dated 707",
+      "period": "Tang dynasty (618–907)",
+      "dynasty": "",
+      "objectURL": "https://www.metmuseum.org/art/collection/search/61549"
+    }
+  }
+]

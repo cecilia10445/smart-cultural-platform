@@ -1,0 +1,24 @@
+{
+  "source_id": "met-61549",
+  "category": "buddhist_sculpture",
+  "objectID": 61549,
+  "title": "Buddha",
+  "objectName": "Figure",
+  "culture": "China",
+  "period": "Tang dynasty (618–907)",
+  "dynasty": "",
+  "date": "dated 707",
+  "medium": "Marble",
+  "dimensions": "H. 21 1/2 in. (54.6 cm); W. 8 3/4 in. (22.2 cm); D. 8 1/2 in. (21.6 cm)",
+  "classification": "Sculpture",
+  "department": "Asian Art",
+  "objectURL": "https://www.metmuseum.org/art/collection/search/61549",
+  "source_url": "https://collectionapi.metmuseum.org/public/collection/v1/objects/61549",
+  "license": "CC0-1.0",
+  "retrieved_at": "2026-07-22T14:31:09.483904+00:00",
+  "source_sha256": "ad3e507f4814a065b2c0c4f69f3476bcad070913812096484131619a91ebb4d8",
+  "retrieval_aliases": {
+    "value": [],
+    "provenance": "project_editorial_metadata"
+  }
+}

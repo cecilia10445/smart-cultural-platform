@@ -1,0 +1,36 @@
+{
+  "schema_version": "met-open-access-v1",
+  "license": "CC0-1.0",
+  "sources": [
+    {
+      "source_id": "met-39666",
+      "document": "documents/met-39666.json",
+      "source_sha256": "8b5fda24e20be36f2e52f8674dfa20561912287636b03419f3859b9614b221dd"
+    },
+    {
+      "source_id": "met-65625",
+      "document": "documents/met-65625.json",
+      "source_sha256": "1da3b0a1ca576aa971bd9f89b29ca3f84101ef738e743c8eb8754e015fa35ab9"
+    },
+    {
+      "source_id": "met-36003",
+      "document": "documents/met-36003.json",
+      "source_sha256": "04a5fb91ac4a8071d7fc633f63bd3f5ee7bf0dcf7a268c070403790e1d52cdd9"
+    },
+    {
+      "source_id": "met-76974",
+      "document": "documents/met-76974.json",
+      "source_sha256": "c9e902b48ea3ccedc11a683d0f1fa410ee1019680aef31baa169f7b1a8d6d7f7"
+    },
+    {
+      "source_id": "met-51486",
+      "document": "documents/met-51486.json",
+      "source_sha256": "0f96ba8ee9f029a377476cbdba978abfcb0277d1c15c30bb525356dbc95f61c1"
+    },
+    {
+      "source_id": "met-61549",
+      "document": "documents/met-61549.json",
+      "source_sha256": "ad3e507f4814a065b2c0c4f69f3476bcad070913812096484131619a91ebb4d8"
+    }
+  ]
+}

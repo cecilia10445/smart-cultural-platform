@@ -1,0 +1,83 @@
+{
+  "GalleryNumber": "",
+  "accessionNumber": "13.100.94",
+  "accessionYear": "1913",
+  "additionalImages": [],
+  "artistAlphaSort": "Rüan Dacheng",
+  "artistBeginDate": "1550",
+  "artistDisplayBio": "Chinese, active early 17th century",
+  "artistDisplayName": "Rüan Dacheng",
+  "artistEndDate": "1700",
+  "artistGender": "",
+  "artistNationality": "Chinese",
+  "artistPrefix": "",
+  "artistRole": "Calligrapher",
+  "artistSuffix": "",
+  "artistULAN_URL": "(not assigned)",
+  "artistWikidata_URL": "https://www.wikidata.org/wiki/Q15908098",
+  "city": "",
+  "classification": "Calligraphy",
+  "constituents": [
+    {
+      "constituentID": 12107,
+      "constituentULAN_URL": "(not assigned)",
+      "constituentWikidata_URL": "https://www.wikidata.org/wiki/Q15908098",
+      "gender": "",
+      "name": "Rüan Dacheng",
+      "role": "Calligrapher"
+    }
+  ],
+  "country": "",
+  "county": "",
+  "creditLine": "John Stewart Kennedy Fund, 1913",
+  "culture": "China",
+  "department": "Asian Art",
+  "dimensions": "7 x 19 3/4 in. (17.8 x 50.2 cm)",
+  "dynasty": "",
+  "excavation": "",
+  "geographyType": "",
+  "isHighlight": false,
+  "isPublicDomain": true,
+  "isTimelineWork": false,
+  "linkResource": "",
+  "locale": "",
+  "locus": "",
+  "measurements": [
+    {
+      "elementDescription": null,
+      "elementMeasurements": {
+        "Height": 17.8,
+        "Width": 50.2
+      },
+      "elementName": "Overall"
+    }
+  ],
+  "medium": "Folding fan mounted as an album leaf; ink on gold paper",
+  "metadataDate": "2025-10-22T04:50:15.297Z",
+  "objectBeginDate": 1600,
+  "objectDate": "",
+  "objectEndDate": 1633,
+  "objectID": 36003,
+  "objectName": "Folding fan mounted as an album leaf",
+  "objectURL": "https://www.metmuseum.org/art/collection/search/36003",
+  "objectWikidata_URL": "",
+  "period": "Ming dynasty (1368–1644)",
+  "portfolio": "",
+  "primaryImage": "https://images.metmuseum.org/CRDImages/as/original/DP153852.jpg",
+  "primaryImageSmall": "https://images.metmuseum.org/CRDImages/as/web-large/DP153852.jpg",
+  "region": "",
+  "reign": "",
+  "repository": "Metropolitan Museum of Art, New York, NY",
+  "rightsAndReproduction": "",
+  "river": "",
+  "state": "",
+  "subregion": "",
+  "tags": [
+    {
+      "AAT_URL": "http://vocab.getty.edu/page/aat/300266660",
+      "Wikidata_URL": "https://www.wikidata.org/wiki/Q12681",
+      "term": "Calligraphy"
+    }
+  ],
+  "title": "Calligraphy"
+}

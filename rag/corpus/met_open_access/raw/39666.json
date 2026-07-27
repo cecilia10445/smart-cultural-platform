@@ -1,0 +1,86 @@
+{
+  "GalleryNumber": "202",
+  "accessionNumber": "37.191.1",
+  "accessionYear": "1937",
+  "additionalImages": [
+    "https://images.metmuseum.org/CRDImages/as/original/DP-32251-002.jpg",
+    "https://images.metmuseum.org/CRDImages/as/original/DP-32251-003.jpg",
+    "https://images.metmuseum.org/CRDImages/as/original/DP-32251-004.jpg",
+    "https://images.metmuseum.org/CRDImages/as/original/DP-32251-005.jpg",
+    "https://images.metmuseum.org/CRDImages/as/original/DP-32251-006.jpg"
+  ],
+  "artistAlphaSort": "",
+  "artistBeginDate": "",
+  "artistDisplayBio": "",
+  "artistDisplayName": "",
+  "artistEndDate": "",
+  "artistGender": "",
+  "artistNationality": "",
+  "artistPrefix": "",
+  "artistRole": "",
+  "artistSuffix": "",
+  "artistULAN_URL": "",
+  "artistWikidata_URL": "",
+  "city": "",
+  "classification": "Ceramics",
+  "constituents": null,
+  "country": "",
+  "county": "",
+  "creditLine": "Gift of Robert E. Tod, 1937",
+  "culture": "China",
+  "department": "Asian Art",
+  "dimensions": "H. 19 in. (48.3 cm); Diam. 19 in. (48.3 cm)",
+  "dynasty": "",
+  "excavation": "",
+  "geographyType": "",
+  "isHighlight": true,
+  "isPublicDomain": true,
+  "isTimelineWork": true,
+  "linkResource": "",
+  "locale": "",
+  "locus": "",
+  "measurements": [
+    {
+      "elementDescription": null,
+      "elementMeasurements": {
+        "Diameter": 48.3
+      },
+      "elementName": "Other"
+    },
+    {
+      "elementDescription": null,
+      "elementMeasurements": {
+        "Height": 48.3
+      },
+      "elementName": "Overall"
+    }
+  ],
+  "medium": "Porcelain painted with cobalt blue under transparent glaze (Jingdezhen ware)",
+  "metadataDate": "2026-02-07T04:59:02.893Z",
+  "objectBeginDate": 1400,
+  "objectDate": "early 15th century",
+  "objectEndDate": 1433,
+  "objectID": 39666,
+  "objectName": "Jar",
+  "objectURL": "https://www.metmuseum.org/art/collection/search/39666",
+  "objectWikidata_URL": "https://www.wikidata.org/wiki/Q29383294",
+  "period": "Ming dynasty (1368–1644), Xuande mark and period (1426–35)",
+  "portfolio": "",
+  "primaryImage": "https://images.metmuseum.org/CRDImages/as/original/DP-32251-001.jpg",
+  "primaryImageSmall": "https://images.metmuseum.org/CRDImages/as/web-large/DP-32251-001.jpg",
+  "region": "",
+  "reign": "",
+  "repository": "Metropolitan Museum of Art, New York, NY",
+  "rightsAndReproduction": "",
+  "river": "",
+  "state": "",
+  "subregion": "",
+  "tags": [
+    {
+      "AAT_URL": "http://vocab.getty.edu/page/aat/300375726",
+      "Wikidata_URL": "https://www.wikidata.org/wiki/Q7559",
+      "term": "Dragons"
+    }
+  ],
+  "title": "Jar with dragon"
+}

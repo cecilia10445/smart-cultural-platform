@@ -1,0 +1,15 @@
+{
+  "dataset_version": "cultural-rag-retrieval-v1",
+  "target_type": "local_bm25_with_conservative_evidence_policy",
+  "cases": [
+    {"id": "porcelain", "case_type": "targeted", "query": "中国青花瓷文创书签", "expected_status": "grounded", "expected_source_ids": ["met-39666"]},
+    {"id": "landscape", "case_type": "targeted", "query": "中国山水画水墨", "expected_status": "grounded", "expected_source_ids": ["met-65625"]},
+    {"id": "calligraphy", "case_type": "targeted", "query": "明代书法扇面", "expected_status": "grounded", "expected_source_ids": ["met-36003"]},
+    {"id": "bronze", "case_type": "targeted", "query": "中国青铜礼器器皿", "expected_status": "grounded", "expected_source_ids": ["met-76974"]},
+    {"id": "silk", "case_type": "targeted", "query": "中国丝织品纺织纹样", "expected_status": "grounded", "expected_source_ids": ["met-51486"]},
+    {"id": "buddha", "case_type": "targeted", "query": "唐代佛教造像佛像", "expected_status": "grounded", "expected_source_ids": ["met-61549"]},
+    {"id": "no-match-1", "case_type": "no_match", "query": "现代汽车发动机", "expected_status": "insufficient_evidence", "expected_source_ids": []},
+    {"id": "no-match-2", "case_type": "no_match", "query": "南美足球比赛", "expected_status": "insufficient_evidence", "expected_source_ids": []},
+    {"id": "ambiguous", "case_type": "ambiguous", "query": "中国传统艺术文创", "expected_status": "insufficient_evidence", "expected_source_ids": []}
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "GalleryNumber": "",
+  "accessionNumber": "13.220.84a, b",
+  "accessionYear": "1913",
+  "additionalImages": [
+    "https://images.metmuseum.org/CRDImages/as/original/DP335256.jpg"
+  ],
+  "artistAlphaSort": "Lianfang Songfou",
+  "artistBeginDate": "",
+  "artistDisplayBio": "Chinese",
+  "artistDisplayName": "Lianfang Songfou",
+  "artistEndDate": "",
+  "artistGender": "",
+  "artistNationality": "Chinese",
+  "artistPrefix": "",
+  "artistRole": "Calligrapher",
+  "artistSuffix": "",
+  "artistULAN_URL": "",
+  "artistWikidata_URL": "",
+  "city": "",
+  "classification": "Textiles-Tapestries",
+  "constituents": [
+    {
+      "constituentID": 18473,
+      "constituentULAN_URL": "",
+      "constituentWikidata_URL": "",
+      "gender": "",
+      "name": "Lianfang Songfou",
+      "role": "Calligrapher"
+    }
+  ],
+  "country": "",
+  "county": "",
+  "creditLine": "John Stewart Kennedy Fund, 1913",
+  "culture": "China",
+  "department": "Asian Art",
+  "dimensions": "Overall (a): 67 1/2 x 14 3/4 in. (171.5 x 37.5 cm)\r\nOverall (b): 67 1/2 x 14 3/4 in. (171.5 x 37.5 cm)",
+  "dynasty": "",
+  "excavation": "",
+  "geographyType": "",
+  "isHighlight": false,
+  "isPublicDomain": true,
+  "isTimelineWork": false,
+  "linkResource": "",
+  "locale": "",
+  "locus": "",
+  "measurements": [
+    {
+      "elementDescription": "b",
+      "elementMeasurements": {
+        "Height": 171.4503,
+        "Width": 37.4651
+      },
+      "elementName": "Overall"
+    },
+    {
+      "elementDescription": "a",
+      "elementMeasurements": {
+        "Height": 171.4503,
+        "Width": 37.4651
+      },
+      "elementName": "Overall"
+    }
+  ],
+  "medium": "Silk tapestry (kesi)",
+  "metadataDate": "2025-10-22T04:50:15.297Z",
+  "objectBeginDate": 1800,
+  "objectDate": "19th century",
+  "objectEndDate": 1899,
+  "objectID": 51486,
+  "objectName": "Kesi",
+  "objectURL": "https://www.metmuseum.org/art/collection/search/51486",
+  "objectWikidata_URL": "",
+  "period": "Qing dynasty (1644–1911)",
+  "portfolio": "",
+  "primaryImage": "https://images.metmuseum.org/CRDImages/as/original/DP335251.jpg",
+  "primaryImageSmall": "https://images.metmuseum.org/CRDImages/as/web-large/DP335251.jpg",
+  "region": "",
+  "reign": "",
+  "repository": "Metropolitan Museum of Art, New York, NY",
+  "rightsAndReproduction": "",
+  "river": "",
+  "state": "",
+  "subregion": "",
+  "tags": null,
+  "title": "Calligraphy Couplet"
+}

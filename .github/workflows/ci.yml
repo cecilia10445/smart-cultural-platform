@@ -39,6 +39,11 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m pytest backend/tests -q -p no:cacheprovider
 
+      - name: Run frozen RAG retrieval evaluation
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python evaluation/rag_retrieval_runner.py --output /tmp/cultural-rag-retrieval.json
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
