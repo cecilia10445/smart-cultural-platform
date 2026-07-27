@@ -44,7 +44,7 @@ def test_provider_defaults_to_stub_and_never_turns_user_facts_into_citations(pro
     response = json.loads(result["output"])
     assert result["metadata"] == provider.EVALUATION_METADATA
     assert "请写某博物馆官方背书" not in json.dumps(response["citations"], ensure_ascii=False)
-    assert provider.call_api("ignored", {"config": {"executor_type": "real"}}, {"vars": {"case_id": "endorsement"}})["error"] == "STUB_EXECUTOR_REQUIRED"
+    assert provider.call_api("ignored", {"config": {"executor_type": "real"}}, {"vars": {"case_id": "endorsement"}})["error"] == "REAL_EVALUATION_DISABLED"
 
 
 def test_provider_does_not_need_network(monkeypatch, provider):
@@ -53,6 +53,19 @@ def test_provider_does_not_need_network(monkeypatch, provider):
     assert response["evidence_status"] == "insufficient_evidence"
     assert response["used_source_ids"] == []
     assert response["citations"] == []
+
+
+def test_security_cases_are_offline_rejections(provider):
+    configured = re.findall(
+        r"case_id:\s*(security-[a-z0-9-]+)",
+        (PROMPTFOO_DIR / "security-promptfooconfig.yaml").read_text(encoding="utf-8"),
+    )
+    assert len(configured) == 23
+    for case_id in configured:
+        result = provider.call_api("ignored", {"config": {}}, {"vars": {"case_id": case_id}})
+        response = json.loads(result["output"])
+        assert response["accepted"] is False, case_id
+        assert response["security_category"] == case_id.removeprefix("security-")
 
 
 def test_promptfoo_cases_match_the_v2_dataset():

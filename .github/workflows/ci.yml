@@ -60,6 +60,13 @@ jobs:
           PROMPTFOO_PYTHON: python
         run: npm run verify:failure-exit
 
+      - name: Run offline Promptfoo AI security evaluation
+        working-directory: evaluation/promptfoo
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PROMPTFOO_PYTHON: python
+        run: npm run eval:security
+
       - name: Run default backend tests
         env:
           JWT_SECRET: ci-temporary-test-secret
@@ -98,6 +105,17 @@ jobs:
             evaluation/artifacts/round-15-results.json
             evaluation/artifacts/round-15-report.html
             evaluation/artifacts/round-15-junit.xml
+
+      - name: Upload Round 16 security evaluation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round-16-promptfoo-redteam
+          if-no-files-found: error
+          path: |
+            evaluation/artifacts/latest.json
+            evaluation/artifacts/latest.html
+            evaluation/artifacts/latest.junit.xml
 
       - name: Check committed diff whitespace
         run: git diff --check HEAD^ HEAD

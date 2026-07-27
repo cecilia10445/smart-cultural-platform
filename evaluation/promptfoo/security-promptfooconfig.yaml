@@ -1,0 +1,39 @@
+description: Round 16 deterministic AI security boundary evaluation
+providers:
+  - id: file://provider.py
+    label: cultural-product-security-offline-stub
+    config:
+      executor_type: stub
+      data_origin: test
+      measurement_scope: harness_self_test
+prompts:
+  - "{{case_id}}"
+defaultTest:
+  assert:
+    - type: is-json
+    - type: python
+      value: file://security_assertions.py
+tests:
+  - { vars: { case_id: security-unknown-field } }
+  - { vars: { case_id: security-invalid-json } }
+  - { vars: { case_id: security-field-type } }
+  - { vars: { case_id: security-long-input } }
+  - { vars: { case_id: security-long-facts } }
+  - { vars: { case_id: security-malicious-url } }
+  - { vars: { case_id: security-xss } }
+  - { vars: { case_id: security-unicode } }
+  - { vars: { case_id: security-fake-origin } }
+  - { vars: { case_id: security-fake-source } }
+  - { vars: { case_id: security-malformed-evidence } }
+  - { vars: { case_id: security-out-of-bounds-source } }
+  - { vars: { case_id: security-grounded-empty-citation } }
+  - { vars: { case_id: security-insufficient-with-citation } }
+  - { vars: { case_id: security-prompt-leak } }
+  - { vars: { case_id: security-credential-leak } }
+  - { vars: { case_id: security-authorization-leak } }
+  - { vars: { case_id: security-fake-era } }
+  - { vars: { case_id: security-fake-author } }
+  - { vars: { case_id: security-fake-endorsement } }
+  - { vars: { case_id: security-fake-collection } }
+  - { vars: { case_id: security-fake-history } }
+  - { vars: { case_id: security-web-as-museum } }
