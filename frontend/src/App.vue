@@ -118,7 +118,26 @@
               </div>
               <article class="generated-copy">
                 <h3>{{ result.product_name }}</h3>
-                <section class="content-copy"><h4>文化背景</h4><p>{{ result.factual_background.text }}</p><small>证据状态：{{ result.factual_background.status === 'user_supplied' ? '用户提供的事实' : '证据不足' }}</small></section>
+                <section class="content-copy">
+                  <h4>文化背景</h4>
+                  <p>{{ result.factual_background.text }}</p>
+                </section>
+                <aside class="evidence-register" :class="{ 'evidence-register-empty': result.evidence_status !== 'grounded' }" aria-labelledby="evidence-title">
+                  <div class="evidence-heading">
+                    <p>馆藏依据</p>
+                    <span>{{ result.evidence_status === 'grounded' ? '已核对来源' : '资料状态' }}</span>
+                  </div>
+                  <h4 id="evidence-title">{{ result.evidence_status === 'grounded' ? '本次实际使用的来源' : '当前资料不足' }}</h4>
+                  <ul v-if="result.evidence_status === 'grounded'">
+                    <li v-for="source in result.factual_background.citations" :key="source.source_id">
+                      <a :href="source.source_url" target="_blank" rel="noopener noreferrer">
+                        <span>{{ source.title }}</span>
+                        <small>Metropolitan Museum of Art · {{ source.source_id }}</small>
+                      </a>
+                    </li>
+                  </ul>
+                  <p v-else>未找到足够可靠的本地馆藏证据；设计内容仍可作为创意方案阅读。</p>
+                </aside>
                 <section class="content-copy"><h4>设计解读</h4><p>{{ result.design_interpretation }}</p></section>
                 <section class="content-copy"><h4>产品讲解</h4><p>{{ result.product_copy }}</p></section>
                 <dl class="result-meta">
@@ -356,6 +375,16 @@ export default {
       this.ratingError = ''
     },
     validGeneration(body) {
+      const citations = body?.factual_background?.citations
+      const validCitation = (source) => source
+        && typeof source.source_id === 'string' && source.source_id
+        && typeof source.title === 'string' && source.title
+        && typeof source.source_url === 'string'
+        && source.source_url.startsWith('https://www.metmuseum.org/art/collection/search/')
+      const validEvidence = body?.evidence_status === 'grounded'
+        ? Array.isArray(citations) && citations.length > 0 && citations.every(validCitation)
+        : body?.evidence_status === 'insufficient_evidence'
+          && Array.isArray(citations) && citations.length === 0
       return body?.status === 'success'
         && typeof body.image_url === 'string'
         && body.image_url
@@ -364,6 +393,7 @@ export default {
         && typeof body.design_interpretation === 'string' && body.design_interpretation
         && typeof body.product_copy === 'string' && body.product_copy
         && body.factual_background && typeof body.factual_background.text === 'string'
+        && validEvidence
         && Number.isFinite(Number(body.generation_time))
         && body.log_id !== undefined
         && body.log_id !== null
@@ -1041,6 +1071,79 @@ textarea:focus, input:focus, select:focus {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.evidence-register {
+  margin: 1.5rem 0;
+  padding: 1rem 1.1rem 1.15rem;
+  color: #23382f;
+  border: 1px solid #8ca397;
+  border-left: 4px solid #245244;
+  background: #edf2ec;
+}
+.evidence-register-empty {
+  color: #5f5141;
+  border-color: #c8b69f;
+  border-left-color: #a44536;
+  background: #f4eee5;
+}
+.evidence-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: .65rem;
+  border-bottom: 1px solid currentColor;
+}
+.evidence-heading p, .evidence-heading span {
+  margin: 0;
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.evidence-heading span {
+  opacity: .72;
+  letter-spacing: .04em;
+}
+.evidence-register h4 {
+  margin: 1rem 0 .75rem;
+  font-size: 1.05rem;
+}
+.evidence-register > p {
+  margin: 0;
+  line-height: 1.7;
+}
+.evidence-register ul {
+  display: grid;
+  gap: .55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.evidence-register a {
+  display: grid;
+  gap: .25rem;
+  min-width: 0;
+  padding: .7rem .8rem;
+  color: #1f493d;
+  border: 1px solid rgba(36, 82, 68, .28);
+  background: rgba(255, 255, 255, .54);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition: color .18s ease, border-color .18s ease, background-color .18s ease;
+}
+.evidence-register a:hover {
+  color: #fffdf5;
+  border-color: #245244;
+  background: #245244;
+}
+.evidence-register a span {
+  font-weight: 700;
+}
+.evidence-register a small {
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: .7rem;
+  opacity: .76;
+}
 .result-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1215,7 +1318,7 @@ textarea:focus, input:focus, select:focus {
   overflow-wrap: anywhere;
   font-size: 1.15rem;
 }
-.workspace-nav button:focus-visible, .text-button:focus-visible, .direction-card:focus-visible, .primary-button:focus-visible, .secondary-button:focus-visible, .rating-buttons button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+.workspace-nav button:focus-visible, .text-button:focus-visible, .direction-card:focus-visible, .primary-button:focus-visible, .secondary-button:focus-visible, .rating-buttons button:focus-visible, .evidence-register a:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
   outline: 3px solid #a44536;
   outline-offset: 3px;
 }

@@ -19,14 +19,28 @@ function deferred() {
   return { promise, resolve }
 }
 
-function generationBody(imageUrl = 'https://test-images.invalid/generated.png') {
+function generationBody(imageUrl = 'https://test-images.invalid/generated.png', evidenceMode = 'grounded') {
+  const grounded = evidenceMode === 'grounded'
+  const citations = grounded ? [{
+    source_id: 'met-39666',
+    title: 'Jar with dragon',
+    source_url: 'https://www.metmuseum.org/art/collection/search/39666',
+    license: 'CC0-1.0',
+  }] : []
   return {
     status: 'success',
     generation_kind: 'cultural_product',
-    prompt_template_version: 'cultural-product-v1',
+    prompt_template_version: 'cultural-product-rag-v1',
     image_url: imageUrl,
     product_name: '测试数据：青花书签',
-    factual_background: { status: 'user_supplied', text: '测试数据：用户确认的事实。', evidence_mode: 'user_supplied_only', citations: [] },
+    evidence_status: grounded ? 'grounded' : 'insufficient_evidence',
+    used_source_ids: grounded ? ['met-39666'] : [],
+    factual_background: {
+      status: grounded ? 'grounded' : 'insufficient_evidence',
+      text: grounded ? '测试数据：馆藏器物为釉下钴蓝彩绘瓷器。' : '测试数据：用户确认的事实。',
+      evidence_mode: grounded ? 'frozen_official_sources' : 'user_supplied_only',
+      citations,
+    },
     design_interpretation: '测试数据：用于验证设计解读展示。',
     product_copy: '测试数据：用于验证浏览器中的产品讲解展示，不会写入任何生产数据。',
     generation_time: 1.25,
@@ -146,7 +160,8 @@ async function openWorkspace(page, context, options = {}) {
       const imageUrl = options.generateMode === 'missing-image'
         ? 'https://test-images.invalid/missing.png'
         : undefined
-      await fulfillJson(route, 200, generationBody(imageUrl))
+      const evidenceMode = options.generateMode === 'insufficient-evidence' ? 'insufficient' : 'grounded'
+      await fulfillJson(route, 200, generationBody(imageUrl, evidenceMode))
       return
     }
 
@@ -278,6 +293,11 @@ test.describe('桌面端生成工作台', () => {
     await expect(page.getByText('测试数据：用于验证浏览器中的产品讲解展示，不会写入任何生产数据。')).toBeVisible()
     await expect(page.getByText('1.25 秒')).toBeVisible()
     await expect(page.getByText('test-log-001')).toBeVisible()
+    const sourceLink = page.getByRole('link', { name: /Jar with dragon/ })
+    await expect(sourceLink).toHaveAttribute('href', 'https://www.metmuseum.org/art/collection/search/39666')
+    await expect(sourceLink).toHaveAttribute('target', '_blank')
+    await expect(sourceLink).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(page.getByText('met-39666')).toBeVisible()
     await expect(page.locator('img[alt="测试数据：青花书签"]')).toHaveAttribute('src', 'https://test-images.invalid/generated.png')
     await page.screenshot({ path: path.join(screenshotDirectory, 'desktop-success-result.png'), fullPage: true })
 
@@ -299,6 +319,21 @@ test.describe('桌面端生成工作台', () => {
     expect(harness.pageErrors).toEqual([])
     expect(harness.forbiddenRequests).toEqual([])
   })
+
+  test('无可靠命中时明确显示资料不足且不伪造来源', async ({ page, context }) => {
+    const harness = await openWorkspace(page, context, { generateMode: 'insufficient-evidence' })
+
+    await fillBrief(page, '测试数据：无馆藏命中')
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByRole('heading', { name: '当前资料不足' })).toBeVisible()
+    await expect(page.getByText('未找到足够可靠的本地馆藏证据')).toBeVisible()
+    await expect(page.getByText('Metropolitan Museum of Art')).toHaveCount(0)
+    await expectLayoutIsUsable(page)
+
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+    expect(harness.forbiddenRequests).toEqual([])
+  })
 })
 
 test.describe('移动端生成工作台', () => {
@@ -313,6 +348,20 @@ test.describe('移动端生成工作台', () => {
     await expect(page.getByLabel('补充画面要求（可选）')).toBeVisible()
     await expectLayoutIsUsable(page)
     await page.screenshot({ path: path.join(screenshotDirectory, 'mobile-default.png'), fullPage: true })
+
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+    expect(harness.forbiddenRequests).toEqual([])
+  })
+
+  test('引用结果在窄屏可读且没有页面级横向溢出', async ({ page, context }) => {
+    const harness = await openWorkspace(page, context)
+
+    await fillBrief(page)
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByRole('heading', { name: '本次实际使用的来源' })).toBeVisible()
+    await expect(page.getByRole('link', { name: /Jar with dragon/ })).toBeVisible()
+    await expectLayoutIsUsable(page)
 
     expect(harness.consoleErrors).toEqual([])
     expect(harness.pageErrors).toEqual([])
