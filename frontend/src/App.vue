@@ -30,21 +30,22 @@
           <form class="creation-form" @submit.prevent="generateContent" novalidate>
             <div class="brief-grid">
               <label class="field-block"><span>产品类型</span><input v-model="brief.product_type" :disabled="loading" placeholder="例如：书签" required></label>
+              <label class="field-block"><span>产品展示方式</span><select id="presentation-mode" v-model="brief.presentation_mode" :disabled="loading"><option value="flat_front_back">正反面</option><option value="three_view">三视图</option><option value="single_hero">单品主视图</option></select></label>
               <label class="field-block"><span>来源类型</span><select v-model="brief.cultural_source.source_type" :disabled="loading"><option value="artifact">器物或纹样</option><option value="heritage">非遗技艺</option><option value="literature">文学意象</option></select></label>
               <label class="field-block"><span>文化原型或灵感来源</span><input v-model="brief.cultural_source.name" :disabled="loading" placeholder="例如：青花折枝纹" required></label>
               <label class="field-block"><span>已知时代（可选）</span><input v-model="brief.cultural_source.era" :disabled="loading" placeholder="例如：明代"></label>
               <label class="field-block"><span>已知作者或机构（可选）</span><input v-model="brief.cultural_source.creator" :disabled="loading"></label>
               <label class="field-block"><span>使用场景</span><input v-model="brief.use_case" :disabled="loading" placeholder="例如：博物馆文创商店" required></label>
               <label class="field-block"><span>目标受众（可选）</span><input v-model="brief.target_audience" :disabled="loading" placeholder="例如：年轻游客和阅读爱好者"></label>
-            </div>
-            <div class="field-block">
-              <label for="facts">确认事实（每行一条）</label>
-              <textarea id="facts" v-model="confirmedFactsText" rows="3" :disabled="loading" placeholder="只填写你已确认的信息；未提供资料时，系统不会把具体历史信息标记为已确认。"></textarea>
-              <p class="field-help">文化背景只依据这些事实整理；设计解读和产品讲解属于创意内容。</p>
-            </div>
-            <div class="field-block">
-              <label for="form-material">造型与材质</label>
-              <textarea id="form-material" v-model="brief.form_and_material" rows="3" :disabled="loading" placeholder="例如：长条形纸质书签，带丝带" required></textarea>
+              <div class="field-block brief-full-row">
+                <label for="form-material">造型与材质</label>
+                <textarea id="form-material" v-model="brief.form_and_material" rows="3" :disabled="loading" placeholder="例如：长条形纸质书签，带丝带" required></textarea>
+              </div>
+              <div class="field-block brief-full-row">
+                <label for="facts">确认事实（每行一条）</label>
+                <textarea id="facts" v-model="confirmedFactsText" rows="3" :disabled="loading" placeholder="只填写你已确认的信息；未提供资料时，系统不会把具体历史信息标记为已确认。"></textarea>
+                <p class="field-help">文化背景只依据这些事实整理；设计解读和产品讲解属于创意内容。</p>
+              </div>
             </div>
 
             <fieldset class="field-block direction-fieldset" :disabled="loading">
@@ -138,8 +139,16 @@
                   </ul>
                   <p v-else>未找到足够可靠的本地馆藏证据；设计内容仍可作为创意方案阅读。</p>
                 </aside>
-                <section class="content-copy"><h4>设计解读</h4><p>{{ result.design_interpretation }}</p></section>
-                <section class="content-copy"><h4>产品讲解</h4><p>{{ result.product_copy }}</p></section>
+                <template v-if="isStructuredResult(result)">
+                  <section class="content-copy"><h4>创意来源</h4><p>{{ result.creative_origin }}</p></section>
+                  <section class="content-copy"><h4>设计思路</h4><p>{{ result.design_concept }}</p></section>
+                  <section class="content-copy"><h4>文化意义</h4><p>{{ result.cultural_meaning }}</p></section>
+                  <section class="content-copy"><h4>核心卖点</h4><ul class="selling-points"><li v-for="point in result.selling_points" :key="point">{{ point }}</li></ul></section>
+                </template>
+                <template v-else>
+                  <section class="content-copy"><h4>设计解读</h4><p>{{ result.design_interpretation }}</p></section>
+                  <section class="content-copy"><h4>产品讲解</h4><p>{{ result.product_copy }}</p></section>
+                </template>
                 <dl class="result-meta">
                   <div><dt>生成耗时</dt><dd>{{ result.generation_time }} 秒</dd></div>
                   <div><dt>记录编号</dt><dd>{{ result.log_id }}</dd></div>
@@ -156,6 +165,7 @@
                 </div>
               </article>
             </div>
+            <button type="button" class="secondary-button" @click="openDetail(result)">查看完整详情</button>
           </section>
         </section>
 
@@ -178,14 +188,19 @@
           <div v-else-if="history.length" class="history-grid">
             <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry">
               <div class="history-visual">
-                <img v-if="record.image_url && !historyImageErrors[record.image_url]" :src="getImageUrl(record.image_url)" :alt="record.title || record.prompt" @error="markHistoryImageFailed(record.image_url)">
+                <img v-if="record.image_url && !historyImageErrors[record.image_url]" :src="getImageUrl(record.image_url)" :alt="record.product_name || record.title || '产品展示图'" @error="markHistoryImageFailed(record.image_url)">
                 <div v-else class="history-image-fallback">图片无法加载</div>
               </div>
               <div>
-                <p class="record-style">{{ record.style || '未记录画面描述' }}</p>
-                <h2>{{ record.title || record.prompt }}</h2>
-                <p>{{ previewText(record.content || record.prompt, 110) }}</p>
-                <time>{{ formatDate(record.timestamp) }}</time>
+                <p class="record-style">{{ isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录') }}</p>
+                <h2>{{ isV2Record(record) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录') }}</h2>
+                <template v-if="isV2Record(record)">
+                  <ul v-if="Array.isArray(record.selling_points) && record.selling_points.length" class="history-selling-points"><li v-for="point in record.selling_points.slice(0, 3)" :key="point">{{ point }}</li></ul>
+                  <p v-else class="history-empty-copy">暂无核心卖点</p>
+                </template>
+                <p v-else>{{ previewText(record.content || record.prompt, 110) }}</p>
+                <time>{{ formatDate(record.timestamp || record.generation_time) }}</time>
+                <button type="button" class="secondary-button" @click="openDetail(record)">查看详情</button>
               </div>
             </article>
           </div>
@@ -238,11 +253,13 @@
         </section>
       </section>
     </div>
+    <ProductDetailDialog :open="detailOpen" :detail="selectedDetail || {}" @close="detailOpen = false" />
   </main>
 </template>
 
 <script>
 import axios from 'axios'
+import ProductDetailDialog from './components/ProductDetailDialog.vue'
 import {
   buildStylePrompt,
   DEFAULT_DIRECTION_ID,
@@ -255,6 +272,7 @@ const DEFAULT_DIRECTION = VISUAL_DIRECTIONS.find((direction) => direction.id ===
 
 export default {
   name: 'App',
+  components: { ProductDetailDialog },
   data() {
     return {
       activeTab: 'generate',
@@ -266,6 +284,7 @@ export default {
         form_and_material: '',
         use_case: '',
         target_audience: '',
+        presentation_mode: 'flat_front_back',
       },
       dimensions: { ...DEFAULT_DIRECTION.dimensions },
       selectedDirectionId: DEFAULT_DIRECTION_ID,
@@ -274,6 +293,8 @@ export default {
       error: '',
       sessionExpired: false,
       result: null,
+      detailOpen: false,
+      selectedDetail: null,
       resultStyle: '',
       userInfo: null,
       imageFailed: false,
@@ -361,7 +382,7 @@ export default {
     clearAll() {
       this.prompt = ''
       this.confirmedFactsText = ''
-      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '' }
+      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '', presentation_mode: 'flat_front_back' }
       this.dimensions = { ...DEFAULT_DIRECTION.dimensions }
       this.selectedDirectionId = DEFAULT_DIRECTION_ID
       this.supplement = ''
@@ -385,18 +406,27 @@ export default {
         ? Array.isArray(citations) && citations.length > 0 && citations.every(validCitation)
         : body?.evidence_status === 'insufficient_evidence'
           && Array.isArray(citations) && citations.length === 0
+      const structured = this.isStructuredResult(body)
+      const legacy = typeof body?.design_interpretation === 'string' && body.design_interpretation
+        && typeof body?.product_copy === 'string' && body.product_copy
       return body?.status === 'success'
         && typeof body.image_url === 'string'
         && body.image_url
         && body.generation_kind === 'cultural_product'
         && typeof body.product_name === 'string' && body.product_name
-        && typeof body.design_interpretation === 'string' && body.design_interpretation
-        && typeof body.product_copy === 'string' && body.product_copy
+        && (structured || legacy)
         && body.factual_background && typeof body.factual_background.text === 'string'
         && validEvidence
         && Number.isFinite(Number(body.generation_time))
         && body.log_id !== undefined
         && body.log_id !== null
+    },
+    isStructuredResult(body) {
+      return typeof body?.creative_origin === 'string' && body.creative_origin
+        && typeof body?.design_concept === 'string' && body.design_concept
+        && typeof body?.cultural_meaning === 'string' && body.cultural_meaning
+        && Array.isArray(body?.selling_points) && body.selling_points.length >= 3 && body.selling_points.length <= 5
+        && body.selling_points.every((point) => typeof point === 'string' && point)
     },
     async generateContent() {
       if (this.loading) return
@@ -566,6 +596,16 @@ export default {
     markHistoryImageFailed(imageUrl) {
       this.historyImageErrors = { ...this.historyImageErrors, [imageUrl]: true }
     },
+    openDetail(detail) {
+      this.selectedDetail = detail
+      this.detailOpen = true
+    },
+    isV2Record(record) {
+      return record?.prompt_template_version === 'cultural-product-rag-v2'
+    },
+    presentationModeLabel(mode) {
+      return ({ flat_front_back: '正反面产品展示', three_view: '三视图产品展示', single_hero: '单品主视图' })[mode] || '产品展示'
+    },
     previewText(value, limit) {
       const text = String(value || '')
       return text.length > limit ? `${text.slice(0, limit)}…` : text
@@ -642,7 +682,10 @@ button, input, select, textarea {
   font-size: 1.1rem;
   font-weight: 700;
   letter-spacing: .04em;
+  white-space: nowrap;
 }
+.selling-points { margin: .45rem 0 0; padding-left: 1.2rem; }
+.selling-points li + li { margin-top: .35rem; }
 .brand-mark {
   width: 34px;
   height: 34px;
@@ -766,15 +809,26 @@ button, input, select, textarea {
 }
 .creation-form {
   max-width: 62rem;
+  display: grid;
+  gap: 1.7rem;
   padding-top: 2rem;
   border-top: 2px solid #17221f;
 }
 .field-block {
-  margin: 0 0 1.7rem;
+  min-width: 0;
+  margin: 0;
   padding: 0;
   border: 0;
 }
-.field-block > label, .field-block legend {
+.brief-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem 1.5rem;
+}
+.brief-full-row {
+  grid-column: 1 / -1;
+}
+.field-block > span, .field-block > label, .field-block legend {
   display: block;
   margin-bottom: .65rem;
   color: #27332c;
@@ -1007,7 +1061,7 @@ textarea:focus, input:focus, select:focus {
   display: block;
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
+  object-fit: contain;
   background: #d9d7cc;
 }
 .image-unavailable {
@@ -1261,6 +1315,14 @@ textarea:focus, input:focus, select:focus {
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
+.history-selling-points {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #596259;
+  font-size: .9rem;
+  line-height: 1.55;
+}
+.history-empty-copy { color: #788178; font-style: italic; }
 .history-entry time {
   display: block;
   margin-top: .7rem;
@@ -1359,7 +1421,7 @@ textarea:focus, input:focus, select:focus {
     padding: .75rem 1rem;
   }
   .brand {
-    font-size: .95rem;
+    font-size: clamp(.92rem, 4vw, 1rem);
   }
   .account-name {
     display: none;
@@ -1375,7 +1437,7 @@ textarea:focus, input:focus, select:focus {
   .section-heading h1 {
     font-size: clamp(2rem, 10vw, 3.1rem);
   }
-  .direction-grid, .dimension-grid, .result-grid, .reference-grid {
+  .brief-grid, .direction-grid, .dimension-grid, .result-grid, .reference-grid {
     grid-template-columns: 1fr;
   }
   .direction-card {

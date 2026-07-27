@@ -162,7 +162,7 @@ button, input { font: inherit; }
 .seal-mark span:nth-child(3) { width: 22px; margin-left: 11px; }
 .eyebrow { margin: 0 0 1rem; color: #5d675e; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: .72rem; font-weight: 700; letter-spacing: .16em; }
 .login-intro h1, .login-panel h2 { margin: 0; font-weight: 700; letter-spacing: .04em; }
-.login-intro h1 { max-width: 7em; font-size: clamp(3rem, 6.2vw, 6.2rem); line-height: 1.12; }
+.login-intro h1 { max-width: none; white-space: nowrap; font-size: clamp(3rem, 6.2vw, 6.2rem); line-height: 1.12; }
 .intro-copy { max-width: 25rem; margin: 1.75rem 0 2.5rem; color: #3f4a43; font-size: 1.1rem; line-height: 1.9; }
 .intro-notes { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 34rem; margin: 0; border-top: 1px solid #a9afa5; }
 .intro-notes div { padding: 1rem .75rem 0 0; }
@@ -190,7 +190,7 @@ button, input { font: inherit; }
 .inline-spinner { width: 1rem; height: 1rem; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
 .access-note { margin: 1.35rem 0 0; color: #697169; font-size: .82rem; line-height: 1.65; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 760px) { .login-page { grid-template-columns: 1fr; } .login-intro { min-height: 34vh; padding: 2.25rem 1.5rem 2.5rem; border-right: 0; border-bottom: 1px solid #c9c3b6; } .login-intro::after { font-size: 10rem; bottom: -1.7rem; } .seal-mark { width: 55px; height: 55px; margin-bottom: 1.25rem; } .seal-mark span { width: 22px; height: 4px; } .seal-mark span:nth-child(2) { width: 31px; } .seal-mark span:nth-child(3) { width: 16px; margin-left: 8px; } .login-intro h1 { font-size: clamp(2.45rem, 11vw, 4rem); } .intro-copy { margin: .75rem 0 1.25rem; font-size: 1rem; } .intro-notes { max-width: 29rem; } .intro-notes div { padding-top: .7rem; } .login-panel { padding: 2.5rem 1.5rem 3rem; } }
+@media (max-width: 760px) { .login-page { grid-template-columns: 1fr; } .login-intro { min-height: 34vh; padding: 2.25rem 1.5rem 2.5rem; border-right: 0; border-bottom: 1px solid #c9c3b6; } .login-intro::after { font-size: 10rem; bottom: -1.7rem; } .seal-mark { width: 55px; height: 55px; margin-bottom: 1.25rem; } .seal-mark span { width: 22px; height: 4px; } .seal-mark span:nth-child(2) { width: 31px; } .seal-mark span:nth-child(3) { width: 16px; margin-left: 8px; } .login-intro h1 { font-size: clamp(2.2rem, 11vw, 4rem); } .intro-copy { margin: .75rem 0 1.25rem; font-size: 1rem; } .intro-notes { max-width: 29rem; } .intro-notes div { padding-top: .7rem; } .login-panel { padding: 2.5rem 1.5rem 3rem; } }
 @media (max-width: 390px) { .role-selector { grid-template-columns: 1fr; } .intro-notes { grid-template-columns: 1fr; gap: .35rem; } .intro-notes div { padding-top: .45rem; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 </style>
