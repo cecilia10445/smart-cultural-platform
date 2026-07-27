@@ -229,7 +229,7 @@ class AIGCService:
         # Legacy API remains compatible while using the configured image adapter.
         return self.generate_image_from_prompt(f"{prompt}；画面方向：{style}")
 
-    def generate_image_from_prompt(self, image_prompt):
+    def generate_image_from_prompt(self, image_prompt, negative_prompt=None):
         if self.image_size not in ALLOWED_WAN_IMAGE_SIZES:
             raise AIGCServiceError("MODEL_INVALID_IMAGE_SIZE", "Image size is not supported by the configured model.")
         payload = {
@@ -245,6 +245,7 @@ class AIGCService:
                 "n": 1,
                 "watermark": False,
                 "prompt_extend": True,
+                **({"negative_prompt": negative_prompt} if negative_prompt else {}),
             },
         }
         response = self._post(

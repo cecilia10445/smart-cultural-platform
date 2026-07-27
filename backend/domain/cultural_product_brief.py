@@ -11,6 +11,7 @@ MAX_FACT_LENGTH = 240
 MAX_SHORT_TEXT = 160
 MAX_LONG_TEXT = 500
 ALLOWED_TOP_LEVEL = {"brief_version", "brief"}
+ALLOWED_PRESENTATION_MODES = {"flat_front_back", "three_view", "single_hero"}
 
 
 class BriefValidationError(ValueError):
@@ -55,7 +56,7 @@ def validate_cultural_product_request(payload):
     brief = _object(payload.get("brief"), "INVALID_REQUEST_FORMAT", "brief")
     allowed_brief = {
         "product_type", "cultural_source", "confirmed_facts", "form_and_material",
-        "use_case", "target_audience", "visual_direction",
+        "use_case", "target_audience", "visual_direction", "presentation_mode",
     }
     if set(brief) - allowed_brief:
         raise BriefValidationError("INVALID_REQUEST_FORMAT", "brief contains unsupported fields.")
@@ -104,8 +105,17 @@ def validate_cultural_product_request(payload):
         "form_and_material": _string(brief.get("form_and_material"), "INVALID_REQUEST_FORMAT", "form_and_material", True, MAX_LONG_TEXT),
         "use_case": _string(brief.get("use_case"), "INVALID_REQUEST_FORMAT", "use_case"),
         "target_audience": _string(brief.get("target_audience"), "INVALID_REQUEST_FORMAT", "target_audience", False),
+        # Legacy internal callers may omit the field; API v2 supplies it explicitly.
+        "presentation_mode": _presentation_mode(brief.get("presentation_mode", "single_hero")),
         "visual_direction": normalized_direction,
     }
+
+
+def _presentation_mode(value):
+    value = _string(value, "INVALID_PRESENTATION_MODE", "presentation_mode")
+    if value not in ALLOWED_PRESENTATION_MODES:
+        raise BriefValidationError("INVALID_PRESENTATION_MODE", "presentation_mode is not supported.")
+    return value
 
 
 def canonical_brief_json(brief):

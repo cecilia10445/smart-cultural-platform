@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import pandas as pd
+import json
 from datetime import datetime, timedelta
 import logging
 try:
@@ -24,6 +25,64 @@ sys.path.append(project_root)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _normalize_v2_factual_background(value):
+    """Return a safe, user-visible factual background payload.
+
+    Stored v2 responses use an object (``text``, ``status``, ``citations``),
+    while early records used a plain string.  Never leak the stored object or
+    JSON representation to the history API.
+    """
+    if isinstance(value, dict):
+        text = value.get("text") if isinstance(value.get("text"), str) else ""
+        status = value.get("status") if value.get("status") in {
+            "grounded", "insufficient_evidence"
+        } else "insufficient_evidence"
+        raw_citations = value.get("citations")
+    elif isinstance(value, str):
+        # Some early rows serialized the object twice.  Decode those shapes so
+        # a JSON object/list can never leak as a user-visible string.
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                decoded = json.loads(stripped)
+            except (TypeError, ValueError):
+                decoded = None
+            if isinstance(decoded, dict):
+                return _normalize_v2_factual_background(decoded)
+            if isinstance(decoded, list):
+                return "", "insufficient_evidence", []
+        text = value
+        status = "insufficient_evidence"
+        raw_citations = []
+    else:
+        text = ""
+        status = "insufficient_evidence"
+        raw_citations = []
+
+    citations = []
+    if isinstance(raw_citations, list):
+        for citation in raw_citations:
+            if not isinstance(citation, dict):
+                continue
+            safe = {
+                key: citation[key]
+                for key in ("source_id", "title", "source_url", "license")
+                if isinstance(citation.get(key), str) and citation[key]
+            }
+            # A citation without a stable source id is not usable evidence.
+            if safe.get("source_id"):
+                citations.append(safe)
+
+    if status != "grounded":
+        citations = []
+    elif not citations:
+        # Do not claim grounded evidence when no verified citation survived
+        # allow-listing.
+        status = "insufficient_evidence"
+
+    return text, status, citations
 
 class MySQLService:
     def __init__(self, host=None, port=None, username=None, password=None, database=None, settings=None):
@@ -193,6 +252,8 @@ class MySQLService:
             history_query = """
             SELECT 
                 id AS log_id,
+                generation_kind,
+                prompt_template_version,
                 timestamp,
                 prompt,
                 style,
@@ -205,6 +266,9 @@ class MySQLService:
                 download_count,
                 user_age,
                 user_gender
+                ,brief_json
+                ,response_json
+                ,data_origin
             FROM generation_logs 
             WHERE user_id = %s AND event_type = 'generate'  # 关键修改：只查询生成记录
             ORDER BY timestamp DESC
@@ -283,6 +347,54 @@ class MySQLService:
                         except (ValueError, TypeError):
                             log_id = None
                     
+                    # Parse structured cultural-product payloads defensively.  Only
+                    # user-visible, allow-listed fields leave this service.
+                    def _json_object(value):
+                        if isinstance(value, dict):
+                            return value
+                        if isinstance(value, (str, bytes)):
+                            try:
+                                parsed = json.loads(value)
+                                return parsed if isinstance(parsed, dict) else {}
+                            except (TypeError, ValueError):
+                                return {}
+                        return {}
+
+                    response_obj = _json_object(item.get('response_json'))
+                    brief_obj = _json_object(item.get('brief_json'))
+                    is_v2 = item.get('prompt_template_version') == 'cultural-product-rag-v2'
+                    if is_v2:
+                        product_name = response_obj.get('product_name') or item.get('title') or ''
+                        selling_points = response_obj.get('selling_points')
+                        if not isinstance(selling_points, list):
+                            selling_points = []
+                        used_source_ids = response_obj.get('used_source_ids')
+                        if not isinstance(used_source_ids, list):
+                            used_source_ids = []
+                        factual_background, evidence_status, citations = _normalize_v2_factual_background(
+                            response_obj.get('factual_background')
+                        )
+                        processed_item = {
+                            'log_id': log_id,
+                            'generation_kind': item.get('generation_kind'),
+                            'prompt_template_version': item.get('prompt_template_version'),
+                            'product_name': product_name,
+                            'creative_origin': response_obj.get('creative_origin') or '',
+                            'design_concept': response_obj.get('design_concept') or '',
+                            'cultural_meaning': response_obj.get('cultural_meaning') or '',
+                            'selling_points': selling_points,
+                            'factual_background': factual_background,
+                            'evidence_status': evidence_status,
+                            'used_source_ids': used_source_ids,
+                            'citations': citations,
+                            'presentation_mode': brief_obj.get('presentation_mode'),
+                            'image_url': str(item['image_url']) if item.get('image_url') else '',
+                            'generation_time': generation_time,
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                        }
+                        processed_history.append(processed_item)
+                        continue
+
                     processed_item = {
                         'log_id': log_id,
                         'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),

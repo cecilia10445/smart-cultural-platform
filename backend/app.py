@@ -214,7 +214,10 @@ except ImportError:
         print(f"📝 [{timestamp}] {event_type}: {data}")
 
 from backend.domain.cultural_product_brief import BriefValidationError, canonical_brief_json, validate_cultural_product_request
-from backend.prompts.cultural_product_v1 import PROMPT_TEMPLATE_VERSION, build_image_prompt, factual_background
+from backend.prompts.cultural_product_v1 import (
+    PROMPT_TEMPLATE_VERSION, build_image_negative_prompt, build_image_prompt,
+    factual_background, structured_product_summary,
+)
 from backend.rag.corpus_loader import CorpusUnavailable
 from backend.rag.service import CulturalRagService
 from backend.services.image_storage import ImagePersistenceError, persist_generated_image, remove_persisted_image
@@ -651,9 +654,10 @@ def generate_cultural_product_api():
         log_generation_failure(user_info.get("user_id"), "text_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
     image_prompt = build_image_prompt(brief, text_result['product_name'])
+    image_negative_prompt = build_image_negative_prompt()
     image_started = time.perf_counter()
     try:
-        provider_image_url = aigc_service.generate_image_from_prompt(image_prompt)
+        provider_image_url = aigc_service.generate_image_from_prompt(image_prompt, image_negative_prompt)
         tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "SUCCEEDED", image_started, image_count=1)
     except AIGCServiceError as error:
         try:
@@ -695,8 +699,10 @@ def generate_cultural_product_api():
         'factual_background': factual,
         'evidence_status': factual['status'],
         'used_source_ids': [source['source_id'] for source in verified_sources],
-        'design_interpretation': text_result['design_interpretation'],
-        'product_copy': text_result['product_copy'],
+        'creative_origin': text_result['creative_origin'],
+        'design_concept': text_result['design_concept'],
+        'cultural_meaning': text_result['cultural_meaning'],
+        'selling_points': text_result['selling_points'],
         'image_prompt': image_prompt,
         'image_url': image_url,
         'generation_time': round(time.time() - started_at, 2),
@@ -725,8 +731,8 @@ def generate_cultural_product_api():
     try:
         log_id = mysql_service.execute_insert(insert_query, (
             user_id, 'generate', datetime.now().isoformat(), prompt_summary, style, image_url,
-            text_result['product_name'], text_result['product_copy'], response_data['generation_time'],
-            len(text_result['product_copy']), None, 0, age_value, gender_value,
+            text_result['product_name'], structured_product_summary(text_result), response_data['generation_time'],
+            len(structured_product_summary(text_result)), None, 0, age_value, gender_value,
             user_data.get('last_login') if user_data else None, data_origin, 'cultural_product',
             PROMPT_TEMPLATE_VERSION, canonical_brief_json(brief), json.dumps(response_data, ensure_ascii=False, separators=(',', ':')),
         ))
