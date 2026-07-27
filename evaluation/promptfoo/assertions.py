@@ -8,11 +8,13 @@ import sys
 EXPECTED_FIELDS = {
     "available_source_ids",
     "citations",
-    "design_interpretation",
+    "creative_origin",
+    "design_concept",
+    "cultural_meaning",
     "evidence_status",
     "evaluation_metadata",
     "factual_background",
-    "product_copy",
+    "selling_points",
     "product_name",
     "prompt_template_version",
     "used_source_ids",
@@ -34,10 +36,13 @@ def evaluate_output(output):
     errors = []
     if set(data) != EXPECTED_FIELDS:
         errors.append("unexpected response field set")
-    for field in ("product_name", "factual_background", "design_interpretation", "product_copy"):
+    for field in ("product_name", "factual_background", "creative_origin", "design_concept", "cultural_meaning"):
         if not isinstance(data.get(field), str) or not data[field].strip():
             errors.append(f"{field} must be non-empty")
-    if data.get("prompt_template_version") != "cultural-product-rag-v1":
+    points = data.get("selling_points")
+    if not isinstance(points, list) or not 3 <= len(points) <= 5 or any(not isinstance(point, str) or not point.strip() for point in points):
+        errors.append("selling_points must contain 3 to 5 non-empty strings")
+    if data.get("prompt_template_version") != "cultural-product-rag-v2":
         errors.append("unexpected prompt template version")
     if data.get("evaluation_metadata") != REQUIRED_METADATA:
         errors.append("Stub metadata is incomplete or misleading")

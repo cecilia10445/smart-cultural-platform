@@ -33,7 +33,7 @@ def test_provider_reuses_versioned_v2_dataset_and_stub_metadata(provider):
     dataset = json.loads((ROOT / "evaluation/datasets/cultural_product_generation_v2.json").read_text(encoding="utf-8"))
     assert len(dataset["cases"]) == 10
     response = provider.evaluate_case("blue-white-bookmark")
-    assert response["prompt_template_version"] == "cultural-product-rag-v1"
+    assert response["prompt_template_version"] == "cultural-product-rag-v2"
     assert response["evaluation_metadata"] == provider.EVALUATION_METADATA
     assert response["used_source_ids"] == ["met-39666"]
     assert response["citations"][0]["source_url"].startswith("https://www.metmuseum.org/")
@@ -73,7 +73,7 @@ def test_project_assertion_accepts_valid_grounded_and_insufficient_output(provid
         (lambda value: value.update({"used_source_ids": ["met-not-retrieved"]}), "unavailable source"),
         (lambda value: value.update({"citations": []}), "citations do not match"),
         (lambda value: value.update({"evaluation_metadata": {}}), "Stub metadata"),
-        (lambda value: value.update({"product_copy": "Authorization: Bearer test-token"}), "sensitive credential"),
+        (lambda value: value.update({"creative_origin": "Authorization: Bearer test-token"}), "sensitive credential"),
     ],
 )
 def test_project_assertion_rejects_invalid_citation_or_metadata(provider, assertions, mutate, reason):

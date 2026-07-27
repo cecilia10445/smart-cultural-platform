@@ -4,7 +4,7 @@ import pytest
 
 from backend.domain.cultural_product_brief import BriefValidationError, validate_cultural_product_request
 from backend.prompts.cultural_product_v1 import (
-    PROMPT_TEMPLATE_VERSION, SYSTEM_PROMPT, build_image_prompt, build_text_messages,
+    PROMPT_TEMPLATE_VERSION, SYSTEM_PROMPT, build_image_negative_prompt, build_image_prompt, build_text_messages,
     factual_background, validate_text_response,
 )
 from backend.services.aigc_service import AIGCServiceError
@@ -16,6 +16,7 @@ def payload():
         "brief_version": "1.0",
         "brief": {
             "product_type": " bookmark ",
+            "presentation_mode": "flat_front_back",
             "cultural_source": {"source_type": "artifact", "name": " 青花折枝纹 ", "era": "明代", "creator": None},
             "confirmed_facts": [" 用户确认：纹样以青花呈现 "],
             "form_and_material": "长条形纸质书签，带丝带",
@@ -43,6 +44,7 @@ def test_brief_normalizes_and_serializes_stably():
     (lambda item: item["brief"].update({"product_type": 1}), "INVALID_PRODUCT_TYPE"),
     (lambda item: item["brief"]["cultural_source"].update({"name": []}), "INVALID_CULTURAL_SOURCE"),
     (lambda item: item["brief"].update({"confirmed_facts": "not-array"}), "INVALID_CONFIRMED_FACTS"),
+    (lambda item: item["brief"].update({"presentation_mode": "four_view"}), "INVALID_PRESENTATION_MODE"),
     (lambda item: item["brief"].update({"visual_direction": []}), "INVALID_VISUAL_DIRECTION"),
 ])
 def test_brief_rejects_invalid_shape(mutate, code):
@@ -71,10 +73,24 @@ def test_prompt_builders_keep_data_separate_and_do_not_treat_injection_as_instru
     assert '"rag_evidence"' in messages[1]["content"]
     assert "met-39666" in messages[1]["content"]
     assert "retrieval_aliases" not in messages[1]["content"]
-    assert PROMPT_TEMPLATE_VERSION == "cultural-product-rag-v1"
+    assert PROMPT_TEMPLATE_VERSION == "cultural-product-rag-v2"
     image_prompt = build_image_prompt(brief, "青花书签")
-    assert "文创产品设计效果图或产品摄影" in image_prompt
+    assert "产品设计展示图" in image_prompt
+    assert "正面与背面" in image_prompt
+    assert "人物" in build_image_negative_prompt()
     assert "style" not in image_prompt
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("flat_front_back", "正面与背面"), ("three_view", "正面、侧面和背面"), ("single_hero", "单件产品居中"),
+])
+def test_image_prompt_is_deterministic_for_each_presentation_mode(mode, expected):
+    item = payload()
+    item["brief"]["presentation_mode"] = mode
+    prompt = build_image_prompt(validate_cultural_product_request(item), "测试产品")
+    assert expected in prompt
+    assert "纯白背景" in prompt
+    assert "文字" in build_image_negative_prompt()
 
 
 def test_factual_background_is_deterministic_and_has_no_citations():
@@ -90,9 +106,9 @@ def test_factual_background_is_deterministic_and_has_no_citations():
 @pytest.mark.parametrize("raw,code", [
     ("not json", "MODEL_INVALID_RESPONSE"),
     ('```json {"product_name":"x"} ```', "MODEL_INVALID_RESPONSE"),
-    ('{"product_name":"","factual_background":"x","design_interpretation":"x","product_copy":"x","used_source_ids":[],"evidence_status":"insufficient_evidence"}', "MODEL_EMPTY_RESPONSE"),
-    ('{"product_name":"x","design_interpretation":"x","product_copy":"x","citations":[]}', "MODEL_INVALID_RESPONSE"),
-    ('{"product_name":"x","factual_background":"x","design_interpretation":"x","product_copy":"x","used_source_ids":"met-1","evidence_status":"grounded"}', "MODEL_INVALID_RESPONSE"),
+    ('{"product_name":"","creative_origin":"x","design_concept":"x","cultural_meaning":"x","selling_points":["a","b","c"],"factual_background":"x","used_source_ids":[],"evidence_status":"insufficient_evidence"}', "MODEL_EMPTY_RESPONSE"),
+    ('{"product_name":"x","creative_origin":"x"}', "MODEL_INVALID_RESPONSE"),
+    ('{"product_name":"x","creative_origin":"x","design_concept":"x","cultural_meaning":"x","selling_points":["a","b"],"factual_background":"x","used_source_ids":"met-1","evidence_status":"grounded"}', "MODEL_INVALID_RESPONSE"),
 ])
 def test_model_response_validation(raw, code):
     with pytest.raises(ValueError, match=code):
@@ -101,9 +117,9 @@ def test_model_response_validation(raw, code):
 
 class V2ModelStub:
     def generate_cultural_product_text(self, _brief):
-        return {"product_name": "青花书签", "design_interpretation": "以中心纹样组织书签正面。", "product_copy": "一枚可随书页同行的青花纹样书签。"}
+        return {"product_name": "青花书签", "creative_origin": "青花折枝纹", "design_concept": "以中心纹样组织纸质书签。", "cultural_meaning": "呈现传统纹样之美。", "selling_points": ["纸质长条形", "中心纹样", "附丝带" ]}
 
-    def generate_image_from_prompt(self, _prompt):
+    def generate_image_from_prompt(self, _prompt, _negative_prompt=None):
         return "https://test-images.invalid/cultural-product.png"
 
 
@@ -119,13 +135,15 @@ class V2EvidenceModelStub(V2ModelStub):
         return {
             "product_name": "青花书签",
             "factual_background": "馆藏罐为透明釉下钴蓝彩绘瓷器。",
-            "design_interpretation": "以中心纹样组织书签正面。",
-            "product_copy": "一枚可随书页同行的青花纹样书签。",
+            "creative_origin": "青花折枝纹",
+            "design_concept": "以中心纹样组织纸质书签。",
+            "cultural_meaning": "呈现传统纹样之美。",
+            "selling_points": ["纸质长条形", "中心纹样", "附丝带"],
             "used_source_ids": self.used_source_ids,
             "evidence_status": self.evidence_status,
         }, {"total_tokens": 10}
 
-    def generate_image_from_prompt(self, _prompt):
+    def generate_image_from_prompt(self, _prompt, _negative_prompt=None):
         self.image_calls += 1
         return super().generate_image_from_prompt(_prompt)
 
@@ -355,7 +373,7 @@ def test_v2_image_model_log_uses_image_generation_stage(app_module, client, monk
     events = []
 
     class ImageFailureModel(V2ModelStub):
-        def generate_image_from_prompt(self, _prompt):
+        def generate_image_from_prompt(self, _prompt, _negative_prompt=None):
             raise AIGCServiceError("MODEL_REQUEST_FAILED", "provider detail", False, http_status=400)
 
     monkeypatch.setattr(app_module, "aigc_service", ImageFailureModel())

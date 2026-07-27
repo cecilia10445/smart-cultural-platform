@@ -54,7 +54,7 @@ def cultural_response():
     return FakeResponse({
         "status": "completed", "model": "qwen3.7-plus",
         "output": [{"type": "message", "status": "completed", "content": [{
-            "type": "output_text", "text": '{"product_name":"青花书签","factual_background":"当前资料不足","design_interpretation":"纹样转译","product_copy":"一枚书签","used_source_ids":[],"evidence_status":"insufficient_evidence"}',
+            "type": "output_text", "text": '{"product_name":"青花书签","creative_origin":"青花折枝纹","design_concept":"纹样转译为纸质书签","cultural_meaning":"呈现传统纹样之美","selling_points":["纸质长条形","中心纹样","附丝带"],"factual_background":"当前资料不足","used_source_ids":[],"evidence_status":"insufficient_evidence"}',
         }]}],
         "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
     })

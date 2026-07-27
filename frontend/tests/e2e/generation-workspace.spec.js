@@ -123,7 +123,7 @@ async function openWorkspace(page, context, options = {}) {
       return
     }
     if (pathname === '/api/user/history') {
-      await fulfillJson(route, 200, { status: 'success', data: [] })
+      await fulfillJson(route, 200, { status: 'success', data: options.historyData || [] })
       return
     }
     if (pathname === '/api/recommendations/personalized') {
@@ -206,6 +206,43 @@ test.describe('桌面端生成工作台', () => {
     await expectLayoutIsUsable(page)
     await page.screenshot({ path: path.join(screenshotDirectory, 'desktop-default.png'), fullPage: true })
 
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+    expect(harness.forbiddenRequests).toEqual([])
+  })
+
+  test('历史 v2 详情使用结构化字段并支持图片预览', async ({ page, context }) => {
+    const historyData = [{
+      log_id: 2,
+      prompt_template_version: 'cultural-product-rag-v2',
+      product_name: '青花杯垫',
+      presentation_mode: 'flat_front_back',
+      creative_origin: '源自青花瓷纹样',
+      design_concept: '将纹样转为杯垫边缘环形装饰',
+      cultural_meaning: '表达雅正生活',
+      selling_points: ['正反面一致展示', '粗陶材质耐用', '边缘纹样清晰'],
+      factual_background: { text: '馆藏事实脱敏文本', status: 'grounded', citations: [{ source_id: 'met-39666', title: '青花器物', source_url: 'https://www.metmuseum.org/art/collection/search/39666', license: 'CC0' }] },
+      evidence_status: 'grounded',
+      citations: [{ source_id: 'met-39666', title: '青花器物', source_url: 'https://www.metmuseum.org/art/collection/search/39666', license: 'CC0' }],
+      image_url: 'https://test-images.invalid/generated.png',
+      generation_time: '2026-01-01T10:00:00Z',
+      timestamp: '2026-01-01T10:00:00Z',
+    }]
+    const harness = await openWorkspace(page, context, { historyData })
+    await page.getByRole('button', { name: /记录/ }).click()
+    await expect(page.getByRole('heading', { name: '青花杯垫' })).toBeVisible()
+    await expect(page.getByText('正反面产品展示')).toBeVisible()
+    await expect(page.getByText('正反面一致展示')).toBeVisible()
+    await page.getByRole('button', { name: '查看详情' }).click()
+    await expect(page.getByRole('dialog', { name: '青花杯垫' })).toBeVisible()
+    await expect(page.getByText('馆藏事实脱敏文本')).toBeVisible()
+    await expect(page.getByRole('link', { name: '青花器物' })).toHaveAttribute('href', /metmuseum/)
+    await expect(page.getByText('[object Object]')).toHaveCount(0)
+    await page.getByRole('button', { name: '放大产品图片' }).click()
+    await expect(page.getByRole('dialog', { name: '产品图片预览' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: '产品图片预览' })).toBeHidden()
+    await page.getByRole('button', { name: '关闭产品详情' }).click()
     expect(harness.consoleErrors).toEqual([])
     expect(harness.pageErrors).toEqual([])
     expect(harness.forbiddenRequests).toEqual([])
@@ -366,5 +403,38 @@ test.describe('移动端生成工作台', () => {
     expect(harness.consoleErrors).toEqual([])
     expect(harness.pageErrors).toEqual([])
     expect(harness.forbiddenRequests).toEqual([])
+  })
+
+  test('窄屏历史详情上下排列且图片预览可用', async ({ page, context }) => {
+    const harness = await openWorkspace(page, context, { historyData: [{
+      log_id: 2, prompt_template_version: 'cultural-product-rag-v2', product_name: '移动端杯垫', presentation_mode: 'flat_front_back',
+      creative_origin: '青花纹样', design_concept: '环形边缘', cultural_meaning: '雅正生活', selling_points: ['卖点一', '卖点二'],
+      factual_background: '归一化资料文本', evidence_status: 'insufficient_evidence', citations: [], image_url: 'https://test-images.invalid/generated.png', timestamp: '2026-01-01T10:00:00Z', generation_time: '2026-01-01T10:00:00Z',
+    }] })
+    await page.getByRole('button', { name: /记录/ }).click()
+    await page.getByRole('button', { name: '查看详情' }).click()
+    await expect(page.getByText('归一化资料文本')).toBeVisible()
+    await expect(page.getByText('当前资料不足')).toBeVisible()
+    await page.getByRole('button', { name: '放大产品图片' }).click()
+    await expect(page.getByRole('dialog', { name: '产品图片预览' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: '关闭产品详情' }).click()
+    await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390)
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+  })
+})
+
+test.describe('登录页响应式标题', () => {
+  test('390px 宽度下平台标题保持单行且不溢出', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mobile', '本组仅在 390×844 验收')
+    await page.goto('/login.html')
+    const title = page.getByRole('heading', { name: '智能文创平台' })
+    await expect(title).toBeVisible()
+    await expect(title).toHaveCSS('white-space', 'nowrap')
+    const box = await title.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box.x + box.width).toBeLessThanOrEqual(390)
+    await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390)
   })
 })

@@ -24,11 +24,13 @@ EVALUATION_METADATA = {
 RESPONSE_FIELDS = {
     "available_source_ids",
     "citations",
-    "design_interpretation",
+    "creative_origin",
+    "design_concept",
+    "cultural_meaning",
     "evidence_status",
     "evaluation_metadata",
     "factual_background",
-    "product_copy",
+    "selling_points",
     "product_name",
     "prompt_template_version",
     "used_source_ids",
@@ -60,8 +62,10 @@ def evaluate_case(case_id):
             if decision.status == "grounded"
             else "当前资料不足，未使用官方引用。"
         ),
-        "design_interpretation": "离线 Stub 仅验证结构化生成与引用边界。",
-        "product_copy": "用于评测链路的本地确定性文创文案。",
+        "creative_origin": "离线 Stub 仅验证文化来源与引用边界。",
+        "design_concept": "离线 Stub 验证结构化生成契约。",
+        "cultural_meaning": "离线 Stub 验证可解释的文化表达。",
+        "selling_points": ["明确产品形态", "可核对引用边界", "结构化字段展示"],
         "used_source_ids": used_source_ids,
         "evidence_status": decision.status,
         "citations": citations,

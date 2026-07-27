@@ -1,4 +1,4 @@
-description: Round 15 offline cultural-product-rag-v1 Stub evaluation
+description: Round 15 offline cultural-product-rag-v2 Stub evaluation
 providers:
   - id: file://provider.py
     label: cultural-product-v2-offline-stub
@@ -19,8 +19,10 @@ defaultTest:
         required:
           - product_name
           - factual_background
-          - design_interpretation
-          - product_copy
+          - creative_origin
+          - design_concept
+          - cultural_meaning
+          - selling_points
           - used_source_ids
           - evidence_status
           - citations

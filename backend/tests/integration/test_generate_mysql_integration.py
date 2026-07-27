@@ -191,13 +191,15 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
             return {
                 "product_name": "容器青花书签",
                 "factual_background": "馆藏罐为透明釉下钴蓝彩绘瓷器。",
-                "design_interpretation": "容器测试设计解读",
-                "product_copy": "容器测试产品讲解",
+                "creative_origin": "青花折枝纹",
+                "design_concept": "将折枝纹转译为纸质书签边饰。",
+                "cultural_meaning": "呈现传统纹样的秩序之美。",
+                "selling_points": ["纸质长条形", "中心纹样", "附丝带"],
                 "used_source_ids": ["met-39666"],
                 "evidence_status": "grounded",
             }, {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}
 
-        def generate_image_from_prompt(self, _image_prompt):
+        def generate_image_from_prompt(self, _image_prompt, _negative_prompt=None):
             return "https://example.invalid/v2.png"
 
     monkeypatch.setattr(app_module, "aigc_service", CulturalProductModelStub())
@@ -205,7 +207,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     v2_response = client.post("/api/v2/cultural-products/generate", json={
         "brief_version": "1.0",
         "brief": {
-            "product_type": "书签", "cultural_source": {"source_type": "artifact", "name": "青花折枝纹", "era": None, "creator": None},
+            "product_type": "书签", "presentation_mode": "flat_front_back", "cultural_source": {"source_type": "artifact", "name": "青花折枝纹", "era": None, "creator": None},
             "confirmed_facts": ["用户确认的测试事实"], "form_and_material": "纸质书签", "use_case": "容器测试", "target_audience": None,
             "visual_direction": {"preset_id": "blue-white-pattern", "cultural_context": "青花瓷", "medium": "釉下青花", "palette": "靛青瓷白", "composition": "中心纹样", "additional_requirements": None},
         },
@@ -215,8 +217,8 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     with database["engine"].connect() as connection:
         v2_row = connection.execute(sa.text("SELECT generation_kind,prompt_template_version,brief_json,response_json,title,content FROM generation_logs WHERE id=:id"), {"id": v2_body["log_id"]}).mappings().one()
     assert v2_row["generation_kind"] == "cultural_product"
-    assert v2_row["prompt_template_version"] == "cultural-product-rag-v1"
-    assert json.loads(v2_row["brief_json"])["product_type"] == "书签"
+    assert v2_row["prompt_template_version"] == "cultural-product-rag-v2"
+    assert json.loads(v2_row["brief_json"])["presentation_mode"] == "flat_front_back"
     persisted_response = json.loads(v2_row["response_json"])
     assert persisted_response["product_name"] == "容器青花书签"
     assert persisted_response["evidence_status"] == "grounded"
@@ -232,7 +234,8 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
             "license": "CC0-1.0",
         }],
     }
-    assert v2_row["title"] == "容器青花书签" and v2_row["content"] == "容器测试产品讲解"
+    assert persisted_response["selling_points"] == ["纸质长条形", "中心纹样", "附丝带"]
+    assert v2_row["title"] == "容器青花书签" and "核心卖点" in v2_row["content"]
     with database["engine"].connect() as connection:
         attempt = connection.execute(sa.text("SELECT request_id,status,generation_log_id,brief_sha256 FROM generation_attempts WHERE generation_log_id=:id"), {"id": v2_body["log_id"]}).mappings().one()
         metrics = connection.execute(sa.text("SELECT stage,status,input_tokens,output_tokens,total_tokens,image_count FROM model_call_metrics WHERE request_id=:request_id ORDER BY id"), {"request_id": attempt["request_id"]}).mappings().all()
