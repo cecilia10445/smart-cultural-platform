@@ -24,7 +24,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert inspector.has_table("alembic_version")
     assert inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0004"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0005"
         create_table = connection.exec_driver_sql("SHOW CREATE TABLE generation_logs").one()[1]
         historical = connection.execute(sa.text(
             "SELECT id,user_id,event_type,timestamp,prompt,style,image_url,title,content,"
@@ -102,6 +102,10 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert inspector.has_table("data_quality_results")
     assert inspector.has_table("generation_attempts")
     assert inspector.has_table("model_call_metrics")
+    metric_checks = {check["name"]: check["sqltext"] for check in inspector.get_check_constraints("model_call_metrics")}
+    assert all(stage in metric_checks["chk_model_call_metrics_stage"] for stage in (
+        "text_generation", "image_generation", "image_reference_generation", "image_layout_edit",
+    ))
     attempt_columns = {column["name"]: column for column in inspector.get_columns("generation_attempts")}
     assert set(attempt_columns) == {"request_id", "user_id", "data_origin", "generation_kind", "prompt_template_version", "brief_sha256", "status", "failed_stage", "error_code", "generation_log_id", "total_latency_ms", "created_at", "finished_at"}
     metric_columns = {column["name"]: column for column in inspector.get_columns("model_call_metrics")}
@@ -244,12 +248,29 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert (metrics[0]["input_tokens"], metrics[0]["output_tokens"], metrics[0]["total_tokens"]) == (12, 8, 20)
     assert metrics[1]["image_count"] == 1
 
-    with pytest.raises(RuntimeError, match="generation attempt tracking downgrade is disabled"):
+    with database["engine"].begin() as connection:
+        for stage in ("image_reference_generation", "image_layout_edit"):
+            connection.execute(sa.text(
+                "INSERT INTO model_call_metrics (request_id,stage,model_name,status,latency_ms,image_count) "
+                "VALUES (:request_id,:stage,'stub','SUCCEEDED',1,1)"
+            ), {"request_id": attempt["request_id"], "stage": stage})
+        with pytest.raises(sa.exc.DBAPIError):
+            connection.execute(sa.text(
+                "INSERT INTO model_call_metrics (request_id,stage,model_name,status,latency_ms) "
+                "VALUES (:request_id,'not_a_stage','stub','SUCCEEDED',1)"
+            ), {"request_id": attempt["request_id"]})
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(sa.text(
+                "INSERT INTO model_call_metrics (request_id,stage,model_name,status,latency_ms) "
+                "VALUES (:request_id,'text_generation','stub','SUCCEEDED',1)"
+            ), {"request_id": attempt["request_id"]})
+
+    with pytest.raises(RuntimeError, match="(generation attempt tracking|model metric stage expansion) downgrade is disabled"):
         command.downgrade(Config("alembic.ini"), "0001")
     post_downgrade_inspector = sa.inspect(database["engine"])
     assert post_downgrade_inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0004"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0005"
         assert connection.exec_driver_sql("SELECT COUNT(*) FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
         assert connection.exec_driver_sql("SELECT download_count FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
     assert post_downgrade_inspector.has_table("etl_batches")
