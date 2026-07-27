@@ -5,8 +5,9 @@ import jwt
 import hmac
 import tempfile
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -29,6 +30,8 @@ backend_dir = current_dir
 project_root = os.path.dirname(backend_dir)
 frontend_dir = os.path.join(project_root, "frontend")
 REAL_BUSINESS_SMOKE_DATABASE = "aigc_platform_demo"
+PROMPTFOO_LATEST_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.json"
+PROMPTFOO_LATEST_HTML_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.html"
 
 print(f"📁 项目根目录: {project_root}")
 print(f"📁 前端目录: {frontend_dir}")
@@ -772,6 +775,107 @@ def generate_cultural_product_api():
     response_data['request_id'] = current_request_id()
     log_event('generate', {'user_id': user_id, 'generation_kind': 'cultural_product', 'log_id': log_id})
     return jsonify(response_data)
+
+# 运营质量报告接口（固定本地 Promptfoo 输出，禁止客户端传路径）
+@app.route('/api/dashboard/quality-report', methods=['GET'])
+def get_quality_report():
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing quality reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        if not PROMPTFOO_LATEST_PATH.is_file() or PROMPTFOO_LATEST_PATH.stat().st_size > 10 * 1024 * 1024:
+            raise ValueError("REPORT_UNAVAILABLE")
+        report = json.loads(PROMPTFOO_LATEST_PATH.read_text(encoding='utf-8'))
+        summary = report.get('results')
+        if not isinstance(summary, dict):
+            raise ValueError("REPORT_INVALID")
+        results = summary.get('results', [])
+        if (not isinstance(results, list) or not isinstance(report.get('evalId'), str)
+                or not isinstance(summary.get('timestamp'), str)):
+            raise ValueError("REPORT_INVALID")
+        passed = failed = errors = 0
+        categories = {}
+        cases = []
+        for result in results:
+            if not isinstance(result, dict):
+                raise ValueError("REPORT_INVALID")
+            grading = result.get('gradingResult')
+            response = result.get('response')
+            metadata = result.get('metadata')
+            category = metadata.get('security_category') if isinstance(metadata, dict) else None
+            if not isinstance(grading, dict) or not isinstance(category, str) or not category:
+                raise ValueError("REPORT_INVALID")
+            if grading.get('error') or (isinstance(response, dict) and response.get('error')):
+                outcome = 'error'
+                errors += 1
+            elif grading.get('pass') is True and result.get('success') is not False:
+                outcome = 'passed'
+                passed += 1
+            else:
+                outcome = 'failed'
+                failed += 1
+            counts = categories.setdefault(category, {'total': 0, 'passed': 0, 'failed': 0, 'error': 0})
+            counts['total'] += 1
+            counts[outcome] += 1
+            response_output = response.get('output') if isinstance(response, dict) else None
+            try:
+                response_data = json.loads(response_output) if isinstance(response_output, str) else {}
+            except json.JSONDecodeError:
+                response_data = {}
+            assertion_name = 'provider_error' if outcome == 'error' else 'security_boundary'
+            if outcome != 'error' and isinstance(grading.get('componentResults'), list):
+                assertion_name = 'json_shape' if not any(
+                    isinstance(component, dict) and isinstance(component.get('assertion'), dict)
+                    and component['assertion'].get('type') == 'python'
+                    for component in grading['componentResults']
+                ) else 'security_boundary'
+            case_id = (result.get('vars') or {}).get('case_id')
+            stable_code = response_data.get('stable_code') if isinstance(response_data, dict) else None
+            cases.append({'case_id': case_id if isinstance(case_id, str) else 'unknown',
+                          'category': category, 'outcome': outcome,
+                          'stable_code': stable_code if isinstance(stable_code, str) else 'PROVIDER_ERROR',
+                          'assertion_name': assertion_name})
+        total = len(results)
+        risk_groups = {
+            'leakage_count': {'prompt-leak', 'credential-leak', 'authorization-leak'},
+            'invalid_citation_count': {'fake-source', 'malformed-evidence', 'out-of-bounds-source', 'grounded-empty-citation', 'insufficient-with-citation'},
+            'factual_overreach_count': {'fake-era', 'fake-author', 'fake-endorsement', 'fake-collection', 'fake-history', 'web-as-museum'},
+            'invalid_structure_count': {'unknown-field', 'invalid-json', 'field-type', 'long-input', 'long-facts'},
+        }
+        risk_counts = {name: sum(categories.get(category, {}).get('failed', 0) for category in members)
+                       for name, members in risk_groups.items()}
+        return jsonify({'status': 'success', 'data': {
+            'run_id': report.get('evalId'),
+            'generated_at': summary.get('timestamp'),
+            'run_status': 'error' if errors else ('failed' if failed else 'passed'),
+            'promptfoo_version': '0.121.19',
+            'total': total, 'passed': passed, 'failed': failed, 'error': errors,
+            'attack_success_rate': round(failed / total, 4) if total else 0,
+            'security_categories': categories,
+            'cases': cases,
+            **risk_counts,
+        }})
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return api_error("QUALITY_REPORT_UNAVAILABLE", "Quality report is unavailable.", 503, True, True)
+
+@app.route('/api/dashboard/quality-report/html', methods=['GET'])
+def download_quality_report_html():
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before downloading quality reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        if (not PROMPTFOO_LATEST_HTML_PATH.is_file()
+                or PROMPTFOO_LATEST_HTML_PATH.stat().st_size > 10 * 1024 * 1024):
+            raise ValueError("REPORT_UNAVAILABLE")
+        PROMPTFOO_LATEST_HTML_PATH.read_bytes()
+        return send_file(PROMPTFOO_LATEST_HTML_PATH, mimetype='text/html', as_attachment=True,
+                         download_name='promptfoo-security-report.html', max_age=0)
+    except (OSError, ValueError):
+        return api_error("QUALITY_REPORT_UNAVAILABLE", "Quality report is unavailable.", 503, True, True)
 
 # 运营数据接口（需要管理员权限）
 @app.route('/api/dashboard/stats', methods=['GET'])

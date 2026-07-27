@@ -1,4 +1,4 @@
 import { createApp } from 'vue'
-import Dashboard from './Dashboard.vue'
+import QualityDashboard from './QualityDashboard.vue'
 
-createApp(Dashboard).mount('#app')
+createApp(QualityDashboard).mount('#app')
