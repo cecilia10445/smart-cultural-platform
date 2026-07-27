@@ -33,23 +33,44 @@ jobs:
       - name: Check Python dependencies
         run: python -m pip check
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.1"
+          cache: npm
+          cache-dependency-path: |
+            evaluation/promptfoo/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install Promptfoo evaluation dependencies
+        working-directory: evaluation/promptfoo
+        run: npm ci
+
+      - name: Run offline Promptfoo Stub evaluation
+        working-directory: evaluation/promptfoo
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PROMPTFOO_PYTHON: python
+        run: npm run eval:stub
+
+      - name: Verify Promptfoo failures return non-zero
+        working-directory: evaluation/promptfoo
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PROMPTFOO_PYTHON: python
+        run: npm run verify:failure-exit
+
       - name: Run default backend tests
         env:
           JWT_SECRET: ci-temporary-test-secret
           PYTHONDONTWRITEBYTECODE: "1"
+          ROUND_15_REPORTS_REQUIRED: "1"
         run: python -m pytest backend/tests -q -p no:cacheprovider
 
       - name: Run frozen RAG retrieval evaluation
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python evaluation/rag_retrieval_runner.py --output /tmp/cultural-rag-retrieval.json
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -66,6 +87,17 @@ jobs:
       - name: Run frontend E2E tests
         working-directory: frontend
         run: npm run test:e2e
+
+      - name: Upload Round 15 evaluation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round-15-llm-evaluation
+          if-no-files-found: error
+          path: |
+            evaluation/artifacts/round-15-results.json
+            evaluation/artifacts/round-15-report.html
+            evaluation/artifacts/round-15-junit.xml
 
       - name: Check committed diff whitespace
         run: git diff --check HEAD^ HEAD
