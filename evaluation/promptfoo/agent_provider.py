@@ -24,7 +24,7 @@ META = {
 }
 
 
-def _output(text="text.copy.v1", visual="visual.editorial.v1", sources=None):
+def _output(text="museum-product-explainer", visual="commercial-product-presentation", sources=None):
     return {
         "selected_text_skill_id": text,
         "selected_visual_skill_id": visual,
@@ -68,14 +68,14 @@ def _run(steps, final=None, rag=None):
 
 def evaluate(case_id):
     if case_id == "agent-correct-selection":
-        result = _run(["retrieve", "text:text.copy.v1", "visual:visual.editorial.v1"])
-        return {"passed": result.selected_text_skill_id == "text.copy.v1", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
+        result = _run(["retrieve", "text:museum-product-explainer", "visual:commercial-product-presentation"])
+        return {"passed": result.selected_text_skill_id == "museum-product-explainer", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-visual-selection":
-        result = _run(["retrieve", "text:text.copy.v1", "visual:visual.heritage.v1"], _output(visual="visual.heritage.v1"))
-        return {"passed": result.selected_visual_skill_id == "visual.heritage.v1", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
+        result = _run(["retrieve", "text:retail-product-copy", "visual:heritage-motif-translation"], _output(text="retail-product-copy", visual="heritage-motif-translation"))
+        return {"passed": result.selected_visual_skill_id == "heritage-motif-translation", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-tool-parameters":
-        result = _run(["retrieve", "text:text.copy.v1", "visual:visual.flat.v1"], _output(visual="visual.flat.v1"))
-        return {"passed": result.selected_visual_skill_id == "visual.flat.v1", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
+        result = _run(["retrieve", "text:social-cultural-story", "visual:product-material-realism"], _output(text="social-cultural-story", visual="product-material-realism"))
+        return {"passed": result.selected_visual_skill_id == "product-material-realism", "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-illegal-tool":
         try:
             _run(["unknown-tool"])
@@ -94,7 +94,7 @@ def evaluate(case_id):
         except AgentRunError as error:
             return {"passed": error.code == "RAG_TOOL_FAILED", "stable_code": error.code, "tool_calls": 1, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-schema":
-        result = _run(["retrieve", "text:text.copy.v1", "visual:visual.editorial.v1"])
+        result = _run(["retrieve", "text:museum-product-explainer", "visual:commercial-product-presentation"])
         return {"passed": bool(result.model_dump()), "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-zero-tools":
         try:
@@ -103,27 +103,27 @@ def evaluate(case_id):
             return {"passed": error.code == "SKILL_NOT_LOADED", "stable_code": error.code, "tool_calls": 0, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-text-only":
         try:
-            _run(["retrieve", "text:text.copy.v1"])
+            _run(["retrieve", "text:museum-product-explainer"])
         except AgentRunError as error:
             return {"passed": error.code == "SKILL_NOT_LOADED", "stable_code": error.code, "tool_calls": 2, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-mismatched-skill":
         try:
-            _run(["retrieve", "text:text.copy.v1", "visual:visual.flat.v1"], _output(text="text.brand.v1"))
+            _run(["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation"], _output(text="retail-product-copy", visual="heritage-motif-translation"))
         except AgentRunError as error:
             return {"passed": error.code == "SKILL_NOT_LOADED", "stable_code": error.code, "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-duplicate-kind":
         try:
-            _run(["retrieve", "text:text.copy.v1", "text:text.brand.v1"])
+            _run(["retrieve", "text:museum-product-explainer", "text:retail-product-copy"])
         except AgentRunError as error:
             return {"passed": error.code in {"SKILL_KIND_LIMIT_EXCEEDED", "AGENT_LIMIT_EXCEEDED"}, "stable_code": error.code, "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-no-retrieval-citation":
         try:
-            _run(["text:text.copy.v1", "visual:visual.flat.v1"], _output(sources=["met-39666"]))
+            _run(["text:museum-product-explainer", "visual:heritage-motif-translation"], _output(sources=["met-39666"], visual="heritage-motif-translation"))
         except AgentRunError as error:
             return {"passed": error.code == "SKILL_NOT_LOADED", "stable_code": error.code, "tool_calls": 2, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     if case_id == "agent-tool-limit":
         try:
-            _run(["retrieve", "text:text.copy.v1", "visual:visual.flat.v1", "retrieve"])
+            _run(["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation", "retrieve"])
         except AgentRunError as error:
             return {"passed": error.code == "AGENT_LIMIT_EXCEEDED", "stable_code": error.code, "tool_calls": 3, "schema_valid": True, "evaluation_type": "full_agent_loop"}
     return {"passed": False, "stable_code": "UNKNOWN_AGENT_CASE", "tool_calls": 0, "schema_valid": False, "evaluation_type": "unit_contract_check"}

@@ -12,6 +12,7 @@ from backend.agents.skill_routing import (
     build_skill_routing_agent,
     run_skill_routing,
 )
+from backend.agents.skill_registry import SkillAssetError
 from backend.rag.service import CulturalRagService
 
 
@@ -29,8 +30,8 @@ def ctx(value):
 
 def output_args(sources=None, **overrides):
     value = {
-        "selected_text_skill_id": "text.copy.v1",
-        "selected_visual_skill_id": "visual.editorial.v1",
+        "selected_text_skill_id": "museum-product-explainer",
+        "selected_visual_skill_id": "commercial-product-presentation",
         "selection_reasons": ["audience and evidence fit"],
         "product_copy": "Grounded copy",
         "image_design_spec": "Editorial composition",
@@ -70,10 +71,10 @@ def run_loop(steps, final=None, *, usage_limits=None, rag=None):
 def test_testmodel_runs_retrieve_load_text_load_visual_then_structured_output():
     result = run_skill_routing(
         "为青花瓷设计文创书签",
-        model=LoopTestModel(["retrieve", "text:text.copy.v1", "visual:visual.editorial.v1"]),
+        model=LoopTestModel(["retrieve", "text:museum-product-explainer", "visual:commercial-product-presentation"]),
     )
-    assert result.selected_text_skill_id == "text.copy.v1"
-    assert result.selected_visual_skill_id == "visual.editorial.v1"
+    assert result.selected_text_skill_id == "museum-product-explainer"
+    assert result.selected_visual_skill_id == "commercial-product-presentation"
 
 
 def test_agent_exposes_exactly_two_sequential_tools_and_limits():
@@ -88,6 +89,15 @@ def test_real_model_channel_is_closed_by_default():
         run_skill_routing("设计一个文创产品")
 
 
+def test_catalog_asset_failure_is_stable_before_model_request(monkeypatch):
+    model = TestModel(call_tools=[])
+    monkeypatch.setattr("backend.agents.skill_routing.catalog", lambda: (_ for _ in ()).throw(SkillAssetError("SKILL_ASSET_INVALID")))
+    with pytest.raises(AgentRunError) as caught:
+        run_skill_routing("设计一个文创产品", model=model)
+    assert caught.value.code == "SKILL_ASSET_INVALID"
+    assert model.last_model_request_parameters is None
+
+
 def test_valid_ids_without_tool_loading_are_rejected():
     with pytest.raises(AgentRunError, match="SKILL_NOT_LOADED"):
         run_skill_routing("x", model=LoopTestModel([], output_args()))
@@ -95,7 +105,7 @@ def test_valid_ids_without_tool_loading_are_rejected():
 
 def test_only_text_skill_loaded_is_rejected():
     with pytest.raises(AgentRunError, match="SKILL_NOT_LOADED"):
-        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:text.copy.v1"], output_args()))
+        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:museum-product-explainer"], output_args()))
 
 
 def test_output_skill_must_match_loaded_skill():
@@ -103,15 +113,15 @@ def test_output_skill_must_match_loaded_skill():
         run_skill_routing(
             "x",
             model=LoopTestModel(
-                ["retrieve", "text:text.copy.v1", "visual:visual.flat.v1"],
-                output_args(selected_text_skill_id="text.brand.v1"),
+                ["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation"],
+                output_args(selected_text_skill_id="retail-product-copy", selected_visual_skill_id="heritage-motif-translation"),
             ),
         )
 
 
 def test_duplicate_kind_is_rejected_by_full_loop():
     with pytest.raises(AgentRunError, match="SKILL_KIND_LIMIT_EXCEEDED"):
-        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:text.copy.v1", "text:text.brand.v1"]))
+        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:museum-product-explainer", "text:retail-product-copy"]))
 
 
 def test_no_retrieval_with_citation_is_rejected():
@@ -119,7 +129,7 @@ def test_no_retrieval_with_citation_is_rejected():
         run_skill_routing(
             "x",
             model=LoopTestModel(
-                ["text:text.copy.v1", "visual:visual.flat.v1"],
+                ["text:museum-product-explainer", "visual:heritage-motif-translation"],
                     output_args(used_source_ids=["met-39666"]),
             ),
         )
@@ -127,12 +137,12 @@ def test_no_retrieval_with_citation_is_rejected():
 
 def test_tool_call_limit_is_stable_in_full_loop():
     with pytest.raises(AgentRunError, match="AGENT_LIMIT_EXCEEDED"):
-        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:text.copy.v1", "visual:visual.flat.v1", "retrieve"]))
+        run_skill_routing("x", model=LoopTestModel(["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation", "retrieve"]))
 
 
 def test_request_limit_is_stable():
     with pytest.raises(Exception, match="request_limit"):
-        run_loop(["retrieve", "text:text.copy.v1", "visual:visual.flat.v1"], usage_limits=UsageLimits(request_limit=2, tool_calls_limit=3))
+        run_loop(["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation"], usage_limits=UsageLimits(request_limit=2, tool_calls_limit=3))
 
 
 def test_unregistered_tool_does_not_pass_as_a_fixture():
@@ -150,12 +160,9 @@ def test_retrieve_tool_parameters_and_citation_subset():
 
 def test_load_text_and_visual_skills_are_fixed_and_versioned():
     value = deps()
-    assert _load_skill(ctx(value), "text.evidence.v1")["version"] == "1"
-    assert _load_skill(ctx(value), "visual.heritage.v1")["skill_id"] == "visual.heritage.v1"
-    assert set(SKILLS) == {
-        "text.copy.v1", "text.evidence.v1", "text.brand.v1",
-        "visual.flat.v1", "visual.editorial.v1", "visual.heritage.v1",
-    }
+    assert _load_skill(ctx(value), "retail-product-copy")["version"] == "1.0.0"
+    assert _load_skill(ctx(value), "heritage-motif-translation")["skill_id"] == "heritage-motif-translation"
+    assert len(SKILLS) == 6
 
 
 @pytest.mark.parametrize("skill_id", ["unknown", "/tmp/skill.txt", "text.copy.v2"])
@@ -166,18 +173,18 @@ def test_unknown_or_user_supplied_skill_is_rejected(skill_id):
 
 def test_duplicate_and_second_same_kind_skill_are_rejected():
     value = deps()
-    _load_skill(ctx(value), "text.copy.v1")
+    _load_skill(ctx(value), "museum-product-explainer")
     with pytest.raises(AgentRunError, match="DUPLICATE_SKILL_LOAD"):
-        _load_skill(ctx(value), "text.copy.v1")
+        _load_skill(ctx(value), "museum-product-explainer")
     with pytest.raises(AgentRunError, match="SKILL_KIND_LIMIT_EXCEEDED"):
-        _load_skill(ctx(value), "text.brand.v1")
+        _load_skill(ctx(value), "retail-product-copy")
 
 
 def test_tool_call_limit_is_three():
     value = deps()
     _retrieve(ctx(value), "青花瓷", 1)
-    _load_skill(ctx(value), "text.copy.v1")
-    _load_skill(ctx(value), "visual.flat.v1")
+    _load_skill(ctx(value), "museum-product-explainer")
+    _load_skill(ctx(value), "heritage-motif-translation")
     with pytest.raises(AgentRunError, match="TOOL_CALL_LIMIT_EXCEEDED"):
         _retrieve(ctx(value), "青花瓷", 1)
 
@@ -226,7 +233,7 @@ def test_invalid_top_k_and_tool_exception_are_stable(monkeypatch):
 
 @pytest.mark.parametrize("field,value", [
     ("selected_text_skill_id", "unknown"),
-    ("selected_visual_skill_id", "text.copy.v1"),
+    ("selected_visual_skill_id", "museum-product-explainer"),
 ])
 def test_illegal_structured_output_is_rejected(field, value):
     with pytest.raises(AgentRunError, match="INVALID_STRUCTURED_OUTPUT"):
@@ -235,8 +242,8 @@ def test_illegal_structured_output_is_rejected(field, value):
 
 def test_citation_must_be_retrieved_source_subset():
     model = LoopTestModel(
-        ["retrieve", "text:text.copy.v1", "visual:visual.flat.v1"],
-            output_args(used_source_ids=["met-not-retrieved"], selected_visual_skill_id="visual.flat.v1"),
+        ["retrieve", "text:museum-product-explainer", "visual:heritage-motif-translation"],
+            output_args(used_source_ids=["met-not-retrieved"], selected_visual_skill_id="heritage-motif-translation"),
     )
     with pytest.raises(AgentRunError, match="INVALID_CITATIONS"):
         run_skill_routing("设计一个文创产品", model=model)
