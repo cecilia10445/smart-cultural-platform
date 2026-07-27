@@ -24,7 +24,7 @@ from openai import (
 from backend.prompts.cultural_product_v1 import build_text_messages, validate_text_response
 
 
-ALLOWED_WAN_IMAGE_SIZES = {"1280*1280"}
+ALLOWED_WAN_IMAGE_SIZES = {"1280*1280", "1200*800", "1280*720"}
 
 try:
     from config import load_settings
@@ -53,6 +53,7 @@ class AIGCService:
         self.text_model = self.settings.dashscope_text_model
         self.text_reasoning_effort = self.settings.dashscope_text_reasoning_effort
         self.image_model = self.settings.dashscope_image_model
+        self.image_edit_model = getattr(self.settings, "dashscope_image_edit_model", "wan2.6-image")
         self.image_size = self.settings.dashscope_image_size
         self.text_client = text_client or self._create_text_client()
 
@@ -257,6 +258,25 @@ class AIGCService:
         )
         data = self._response_json(response, "Image")
         return self._extract_image_url(data)
+
+    def edit_image_with_reference(self, reference_image_url, edit_prompt, negative_prompt, output_size):
+        if output_size not in ALLOWED_WAN_IMAGE_SIZES:
+            raise AIGCServiceError("MODEL_INVALID_IMAGE_SIZE", "Image size is not supported by the configured model.")
+        if not isinstance(reference_image_url, str) or not reference_image_url.strip():
+            raise AIGCServiceError("MODEL_INVALID_RESPONSE", "Image reference is missing.")
+        payload = {
+            "model": self.image_edit_model,
+            "input": {"messages": [{"role": "user", "content": [
+                {"text": edit_prompt}, {"image": reference_image_url}
+            ]}]},
+            "parameters": {"size": output_size, "n": 1, "enable_interleave": False,
+                           "watermark": False, "prompt_extend": True,
+                           "negative_prompt": negative_prompt},
+        }
+        response = self._post(self.image_api_url, self._headers(), payload,
+                              (self.settings.dashscope_image_connect_timeout_seconds,
+                               self.settings.dashscope_image_read_timeout_seconds), "IMAGE_EDIT")
+        return self._extract_image_url(self._response_json(response, "Image edit"))
 
     @staticmethod
     def _extract_image_url(data):

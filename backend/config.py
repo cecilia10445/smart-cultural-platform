@@ -34,6 +34,7 @@ class Settings:
     dashscope_text_model: str
     dashscope_text_reasoning_effort: str
     dashscope_image_model: str
+    dashscope_image_edit_model: str
     dashscope_image_size: str
     dashscope_text_connect_timeout_seconds: int
     dashscope_text_read_timeout_seconds: int
@@ -68,6 +69,7 @@ def load_settings():
         dashscope_api_base_url=os.getenv("DASHSCOPE_API_BASE_URL", "https://dashscope.aliyuncs.com/api/v1").rstrip("/"),
         dashscope_text_model=os.getenv("DASHSCOPE_TEXT_MODEL", "qwen3.7-plus"),
         dashscope_image_model=os.getenv("DASHSCOPE_IMAGE_MODEL", "wan2.6-t2i"),
+        dashscope_image_edit_model=os.getenv("DASHSCOPE_IMAGE_EDIT_MODEL", "wan2.6-image"),
         dashscope_text_reasoning_effort=os.getenv("DASHSCOPE_TEXT_REASONING_EFFORT", "none"),
         dashscope_image_size=os.getenv("DASHSCOPE_IMAGE_SIZE", "1280*1280"),
         dashscope_text_connect_timeout_seconds=_int_env("DASHSCOPE_TEXT_CONNECT_TIMEOUT_SECONDS", 5),

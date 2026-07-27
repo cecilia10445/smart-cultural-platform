@@ -57,6 +57,7 @@ def validate_cultural_product_request(payload):
     allowed_brief = {
         "product_type", "cultural_source", "confirmed_facts", "form_and_material",
         "use_case", "target_audience", "visual_direction", "presentation_mode",
+        "back_design_requirements",
     }
     if set(brief) - allowed_brief:
         raise BriefValidationError("INVALID_REQUEST_FORMAT", "brief contains unsupported fields.")
@@ -107,6 +108,10 @@ def validate_cultural_product_request(payload):
         "target_audience": _string(brief.get("target_audience"), "INVALID_REQUEST_FORMAT", "target_audience", False),
         # Legacy internal callers may omit the field; API v2 supplies it explicitly.
         "presentation_mode": _presentation_mode(brief.get("presentation_mode", "single_hero")),
+        "back_design_requirements": _back_design_requirements(
+            brief.get("back_design_requirements"), _presentation_mode(brief.get("presentation_mode", "single_hero")),
+            "back_design_requirements" in brief,
+        ),
         "visual_direction": normalized_direction,
     }
 
@@ -115,6 +120,21 @@ def _presentation_mode(value):
     value = _string(value, "INVALID_PRESENTATION_MODE", "presentation_mode")
     if value not in ALLOWED_PRESENTATION_MODES:
         raise BriefValidationError("INVALID_PRESENTATION_MODE", "presentation_mode is not supported.")
+    return value
+
+
+def _back_design_requirements(value, mode, supplied=True):
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements must be a string.")
+    value = value.strip()
+    if len(value) > 300:
+        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements is too long.")
+    # Omitted field remains compatible with pre-Round15C callers; the new UI/API
+    # supplies it explicitly and an explicit empty value is rejected.
+    if mode == "flat_front_back" and supplied and not value:
+        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements is required for flat_front_back.")
     return value
 
 

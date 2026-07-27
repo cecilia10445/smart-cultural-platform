@@ -110,13 +110,13 @@ def api_error(code, message, status_code, retryable=False, unavailable=False):
 
 def log_generation_failure(user_id, stage, code, error=None):
     """Record only stable, non-content diagnostics for a generation failure."""
-    image_stage = stage in {"image_generation", "image_download"}
+    image_stage = stage in {"image_generation", "image_reference_generation", "image_layout_edit", "image_download"}
     payload = {
         "user_id": user_id,
         "request_id": current_request_id(),
         "code": code,
         "stage": stage,
-        "model_name": getattr(aigc_service, "image_model" if image_stage else "text_model", None),
+        "model_name": getattr(aigc_service, "image_edit_model" if stage == "image_layout_edit" else ("image_model" if image_stage else "text_model"), None),
         "endpoint_path": "/api/v1/services/aigc/multimodal-generation/generation" if image_stage else "/responses",
     }
     if error is not None:
@@ -215,7 +215,7 @@ except ImportError:
 
 from backend.domain.cultural_product_brief import BriefValidationError, canonical_brief_json, validate_cultural_product_request
 from backend.prompts.cultural_product_v1 import (
-    PROMPT_TEMPLATE_VERSION, build_image_negative_prompt, build_image_prompt,
+    PROMPT_TEMPLATE_VERSION, build_image_edit_prompt, build_image_negative_prompt, build_image_prompt,
     factual_background, structured_product_summary,
 )
 from backend.rag.corpus_loader import CorpusUnavailable
@@ -656,23 +656,40 @@ def generate_cultural_product_api():
     image_prompt = build_image_prompt(brief, text_result['product_name'])
     image_negative_prompt = build_image_negative_prompt()
     image_started = time.perf_counter()
+    stage_started_at = image_started
+    image_stage_name = "image_generation"
     try:
-        provider_image_url = aigc_service.generate_image_from_prompt(image_prompt, image_negative_prompt)
-        tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "SUCCEEDED", image_started, image_count=1)
+        if brief["presentation_mode"] == "single_hero" or (
+            brief["presentation_mode"] == "flat_front_back" and not brief.get("back_design_requirements")
+        ):
+            provider_image_url = aigc_service.generate_image_from_prompt(image_prompt, image_negative_prompt)
+            tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "SUCCEEDED", image_started, image_count=1)
+        else:
+            image_stage_name = "image_reference_generation"
+            reference_url = aigc_service.generate_image_from_prompt(image_prompt, image_negative_prompt)
+            tracker.record_metric("image_reference_generation", getattr(aigc_service, "image_model", None), "SUCCEEDED", image_started, image_count=1)
+            edit_started = time.perf_counter()
+            image_stage_name = "image_layout_edit"
+            stage_started_at = edit_started
+            output_size = "1200*800" if brief["presentation_mode"] == "flat_front_back" else "1280*720"
+            provider_image_url = aigc_service.edit_image_with_reference(
+                reference_url, build_image_edit_prompt(brief, text_result["product_name"]), image_negative_prompt, output_size
+            )
+            tracker.record_metric("image_layout_edit", getattr(aigc_service, "image_edit_model", None), "SUCCEEDED", edit_started, image_count=1)
     except AIGCServiceError as error:
         try:
-            tracker.record_metric("image_generation", getattr(aigc_service, "image_model", None), "FAILED", image_started, error=error)
-            finish_tracking_failure("image_generation", error.code)
+            tracker.record_metric(image_stage_name, getattr(aigc_service, "image_edit_model" if image_stage_name == "image_layout_edit" else "image_model", None), "FAILED", stage_started_at, error=error)
+            finish_tracking_failure(image_stage_name, error.code)
         except TrackingPersistenceError:
             finish_tracking_failure("persistence", "TRACKING_METRIC_PERSIST_FAILED")
-        log_generation_failure(user_info.get("user_id"), "image_generation", error.code, error)
+        log_generation_failure(user_info.get("user_id"), image_stage_name, error.code, error)
         return api_error(error.code, public_model_error_message(error.code), 502, error.retryable)
     except TrackingPersistenceError as error:
         finish_tracking_failure("persistence", str(error))
         return api_error(str(error), "Generation tracking is temporarily unavailable.", 503, True, True)
     except Exception:
-        finish_tracking_failure("image_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
-        log_generation_failure(user_info.get("user_id"), "image_generation", "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        finish_tracking_failure(image_stage_name, "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
+        log_generation_failure(user_info.get("user_id"), image_stage_name, "CULTURAL_PRODUCT_UNEXPECTED_ERROR")
         return api_error("CULTURAL_PRODUCT_UNEXPECTED_ERROR", "Cultural product generation could not be completed.", 500)
     try:
         image_url = persist_generated_image(provider_image_url, os.path.join(project_root, "static", "images"))

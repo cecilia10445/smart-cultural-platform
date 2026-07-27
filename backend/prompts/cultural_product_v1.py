@@ -92,7 +92,19 @@ def build_image_prompt(brief, product_name):
 
 
 def build_image_negative_prompt():
-    return "人物，手持，使用场景，房间，桌面道具，花草装饰，包装文字，水印，品牌Logo，错误文字，多余产品，背景纹理，复杂阴影，裁切产品"
+    return "人物，手持，使用场景，房间，桌面道具，花草装饰，包装文字，水印，品牌Logo，错误文字，多余产品，重复正面，背景纹理，复杂阴影，裁切产品"
+
+
+def build_image_edit_prompt(brief, product_name):
+    mode = brief["presentation_mode"]
+    base = f"输入图是唯一的{product_name}产品身份参考。最终输出纯白背景横向产品设计板，产品完整可见，不生成标签、标题或说明文字。"
+    if mode == "flat_front_back":
+        return base + (
+            "左侧展示正面并保留正面装饰纹样；右侧展示背面，严格使用背面设计与材质要求："
+            f"{brief['back_design_requirements']}。背面不得复制正面纹样；正反面外轮廓、尺寸、厚度、材质和产品身份一致；"
+            "两个视图之间留出清晰白色间隔；禁止第三件产品、Logo、水印、人物、手部、场景和道具。"
+        )
+    return base + "同一件产品按正面、侧面、背面三视图横向排列，外轮廓、比例、材质和颜色一致，禁止重复同一视角、文字和场景。"
 
 
 def structured_product_summary(result):
