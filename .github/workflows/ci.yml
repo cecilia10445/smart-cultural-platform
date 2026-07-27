@@ -67,6 +67,13 @@ jobs:
           PROMPTFOO_PYTHON: python
         run: npm run eval:security
 
+      - name: Run offline Pydantic AI skill-routing evaluation
+        working-directory: evaluation/promptfoo
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PROMPTFOO_PYTHON: python
+        run: npm run eval:agent
+
       - name: Run default backend tests
         env:
           JWT_SECRET: ci-temporary-test-secret
@@ -116,6 +123,17 @@ jobs:
             evaluation/artifacts/latest.json
             evaluation/artifacts/latest.html
             evaluation/artifacts/latest.junit.xml
+
+      - name: Upload Round 17A agent evaluation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round-17a-pydantic-agent
+          if-no-files-found: error
+          path: |
+            evaluation/artifacts/round-17a-results.json
+            evaluation/artifacts/round-17a-report.html
+            evaluation/artifacts/round-17a.junit.xml
 
       - name: Check committed diff whitespace
         run: git diff --check HEAD^ HEAD

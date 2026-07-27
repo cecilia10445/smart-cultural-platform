@@ -1,0 +1,29 @@
+description: Round 17A offline Pydantic AI skill-routing evaluation
+providers:
+  - id: file://agent_provider.py
+    label: pydantic-agent-test-model
+    config:
+      executor_type: test_model
+prompts:
+  - "{{case_id}}"
+defaultTest:
+  assert:
+    - type: is-json
+      metric: agent_json
+    - type: python
+      metric: agent_contract
+      value: file://agent_assertions.py
+tests:
+  - { description: correct selection, vars: { case_id: agent-correct-selection } }
+  - { description: visual selection, vars: { case_id: agent-visual-selection } }
+  - { description: tool parameters, vars: { case_id: agent-tool-parameters } }
+  - { description: illegal tool, vars: { case_id: agent-illegal-tool } }
+  - { description: prompt injection, vars: { case_id: agent-prompt-injection } }
+  - { description: tool failure, vars: { case_id: agent-tool-failure } }
+  - { description: schema effectiveness, vars: { case_id: agent-schema } }
+  - { description: zero tool calls rejected, vars: { case_id: agent-zero-tools } }
+  - { description: text-only rejected, vars: { case_id: agent-text-only } }
+  - { description: mismatched skill rejected, vars: { case_id: agent-mismatched-skill } }
+  - { description: duplicate kind rejected, vars: { case_id: agent-duplicate-kind } }
+  - { description: citation without retrieval rejected, vars: { case_id: agent-no-retrieval-citation } }
+  - { description: tool limit rejected, vars: { case_id: agent-tool-limit } }
