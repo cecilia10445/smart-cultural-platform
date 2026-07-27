@@ -1271,9 +1271,9 @@ textarea:focus, input:focus, select:focus {
 .history-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
+  gap: 0;
   border-top: 2px solid #17221f;
-  background: #c9c3b6;
+  background: transparent;
 }
 .history-entry {
   display: grid;
@@ -1282,6 +1282,8 @@ textarea:focus, input:focus, select:focus {
   min-width: 0;
   padding: 1rem;
   background: #fbfaf5;
+  border-left: 1px solid #c9c3b6;
+  border-bottom: 1px solid #c9c3b6;
 }
 .history-visual {
   min-width: 0;

@@ -248,6 +248,35 @@ test.describe('桌面端生成工作台', () => {
     expect(harness.forbiddenRequests).toEqual([])
   })
 
+  test('三条历史记录不生成空白占位卡片', async ({ page, context }) => {
+    const historyData = [1, 2, 3].map((id) => ({
+      log_id: id,
+      prompt_template_version: 'cultural-product-rag-v2',
+      product_name: `测试历史产品${id}`,
+      presentation_mode: 'flat_front_back',
+      selling_points: ['具体卖点一', '具体卖点二'],
+      factual_background: '脱敏资料文本',
+      evidence_status: 'insufficient_evidence',
+      citations: [],
+      image_url: 'https://test-images.invalid/generated.png',
+      generation_time: '2026-01-01T10:00:00Z',
+      timestamp: '2026-01-01T10:00:00Z',
+    }))
+    const harness = await openWorkspace(page, context, { historyData })
+    await page.getByRole('button', { name: /记录/ }).click()
+    await expect(page.locator('.history-entry')).toHaveCount(3)
+    await expect(page.locator('.history-grid .history-entry')).toHaveCount(3)
+    await expect(page.locator('.history-grid').locator(':scope > :not(.history-entry)')).toHaveCount(0)
+    const gridBackground = await page.locator('.history-grid').evaluate((node) => getComputedStyle(node).backgroundColor)
+    expect(['transparent', 'rgba(0, 0, 0, 0)']).toContain(gridBackground)
+    if (process.env.ROUND15C_HISTORY_SCREENSHOT) {
+      await page.screenshot({ path: process.env.ROUND15C_HISTORY_SCREENSHOT, fullPage: true })
+    }
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+    expect(harness.forbiddenRequests).toEqual([])
+  })
+
   test('切换方案、编辑维度和补充要求会更新稳定画面描述', async ({ page, context }) => {
     const harness = await openWorkspace(page, context)
 
