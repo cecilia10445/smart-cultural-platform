@@ -103,14 +103,17 @@ def current_request_id():
     return g.api_request_id
 
 
-def api_error(code, message, status_code, retryable=False, unavailable=False):
-    return jsonify({
+def api_error(code, message, status_code, retryable=False, unavailable=False, field=None):
+    payload = {
         "status": "unavailable" if unavailable else "error",
         "code": code,
         "message": message,
         "request_id": current_request_id(),
         "retryable": retryable,
-    }), status_code
+    }
+    if field:
+        payload["field"] = field
+    return jsonify(payload), status_code
 
 
 def log_generation_failure(user_id, stage, code, error=None):
@@ -788,7 +791,13 @@ def generate_cultural_product_with_text_skill_api():
     try:
         brief = validate_cultural_product_request(request.get_json(silent=True))
     except BriefValidationError as error:
-        return api_error(error.code, error.message, 400)
+        brief_messages = {
+            "INVALID_FRONT_DESIGN_REQUIREMENTS": ("front_design_requirements", "请填写三视图的正面设计要求。"),
+            "INVALID_BACK_DESIGN_REQUIREMENTS": ("back_design_requirements", "请填写当前展示方式所需的背面设计要求。"),
+            "INVALID_SIDE_DESIGN_REQUIREMENTS": ("side_design_requirements", "请填写三视图的侧面设计要求。"),
+        }
+        field, message = brief_messages.get(error.code, (None, "请检查 Brief 的必填项和格式后再提交。"))
+        return api_error(error.code, message, 400, False, False, field=field)
     try:
         from backend.services.round17c_business import BusinessGenerationError, generate_with_text_skill
         result = generate_with_text_skill(

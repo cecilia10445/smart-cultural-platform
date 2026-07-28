@@ -328,6 +328,31 @@ class MySQLService:
         fields = ("run_id", "rag_status", "source_ids", "selected_skill_id", "skill_version", "skill_body_sha256", "tool_call_name", "model_name", "actual_calls", "product_copy", "image_design_spec")
         return {"log_id": row.get("log_id"), **{field: value.get(field) for field in fields}}
 
+    def preflight_text_skill_generation_storage(self):
+        """Verify the existing persistence boundary without retaining any row."""
+        if pymysql is None:
+            return None
+        connection = None
+        try:
+            settings = load_settings()
+            connection = pymysql.connect(
+                host=self.host, port=self.port, user=self.username, password=self.password,
+                database=self.database, charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+                autocommit=False, connect_timeout=self.connect_timeout,
+                read_timeout=settings.mysql_read_timeout_seconds, write_timeout=settings.mysql_write_timeout_seconds,
+            )
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM generation_logs LIMIT 0")
+                connection.begin()
+                connection.rollback()
+            return {"database": self.database, "table": "generation_logs", "transaction_status": "rolled_back"}
+        except Exception as error:
+            logger.error("Text Skill persistence preflight failed: %s", type(error).__name__)
+            return None
+        finally:
+            if connection:
+                connection.close()
+
     def check_connection_health(self):
         """检查连接健康状态 - 现在总是返回True，因为每次查询都新建连接"""
         return True  # 由于每次查询都新建连接，健康检查不再必要

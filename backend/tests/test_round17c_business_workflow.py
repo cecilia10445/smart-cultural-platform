@@ -86,6 +86,33 @@ def test_mysql_readback_is_allowlisted(monkeypatch):
     assert "secret" not in body
 
 
+def test_storage_preflight_uses_existing_table_and_rolls_back(monkeypatch):
+    from backend.services import mysql_service as module
+    from backend.services.mysql_service import MySQLService
+
+    events = []
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, query): events.append(query)
+    class Connection:
+        def cursor(self): return Cursor()
+        def begin(self): events.append("BEGIN")
+        def rollback(self): events.append("ROLLBACK")
+        def close(self): events.append("CLOSE")
+    class FakePyMySQL:
+        class cursors: DictCursor = object
+        @staticmethod
+        def connect(**_kwargs): return Connection()
+    settings = SimpleNamespace(mysql_read_timeout_seconds=1, mysql_write_timeout_seconds=1)
+    service = MySQLService.__new__(MySQLService)
+    service.host, service.port, service.username, service.password, service.database, service.connect_timeout = "host", 3306, "user", "password", "test_db", 1
+    monkeypatch.setattr(module, "pymysql", FakePyMySQL)
+    monkeypatch.setattr(module, "load_settings", lambda: settings)
+    assert service.preflight_text_skill_generation_storage() == {"database": "test_db", "table": "generation_logs", "transaction_status": "rolled_back"}
+    assert any("generation_logs" in event for event in events) and events[-2:] == ["ROLLBACK", "CLOSE"]
+
+
 def test_business_flow_blocks_before_model_when_evidence_is_not_grounded(monkeypatch, tmp_path):
     monkeypatch.setattr(business, "freeze_evidence", lambda _: {"status": "insufficient_evidence", "sources": []})
     monkeypatch.setattr(business, "build_dashscope_client", lambda **kwargs: pytest.fail("model must not be constructed"))
@@ -132,6 +159,47 @@ def test_experimental_api_keeps_existing_v2_route_separate(app_module, client, m
     assert response.get_json()["experimental_text_skill"] is True
     assert called["brief"]["product_type"] == "折叠阅读灯"
     assert writes == [{"log_id": 88, "database_writes": 1, "transaction_status": "committed"}]
+
+
+@pytest.mark.parametrize(("field", "code"), [
+    ("front_design_requirements", "INVALID_FRONT_DESIGN_REQUIREMENTS"),
+    ("back_design_requirements", "INVALID_BACK_DESIGN_REQUIREMENTS"),
+    ("side_design_requirements", "INVALID_SIDE_DESIGN_REQUIREMENTS"),
+])
+def test_three_view_brief_errors_are_client_errors_before_model(app_module, client, monkeypatch, field, code):
+    from backend.tests.conftest import login
+    import backend.services.round17c_business as service
+
+    payload = json.loads(json.dumps(BRIEF))
+    payload["brief"].update({
+        "presentation_mode": "three_view",
+        "front_design_requirements": "正面强调山水留白。",
+        "back_design_requirements": "背面安排使用说明。",
+        "side_design_requirements": "侧面交代厚度与连接。",
+    })
+    payload["brief"][field] = ""
+    monkeypatch.setattr(service, "generate_with_text_skill", lambda *_args, **_kwargs: pytest.fail("model must not be called"))
+    response = client.post("/api/v2/cultural-products/generate-with-text-skill", json=payload, headers={"Authorization": f"Bearer {login(client)}"})
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body["code"] == code and body["field"] == field and body["retryable"] is False
+
+
+def test_three_view_preflight_validates_browser_contract_without_constructing_model(monkeypatch):
+    from evaluation import round17c_three_view_preflight as preflight
+
+    payload = json.loads(json.dumps(BRIEF))
+    payload["brief"].update({
+        "presentation_mode": "three_view",
+        "front_design_requirements": "正面以山水留白组织核心识别图案与产品名称。",
+        "back_design_requirements": "背面保留来源说明区与低饱和辅助纹样，不重复正面主体。",
+        "side_design_requirements": "侧面说明折叠厚度、竹木连接和连续边饰。",
+    })
+    monkeypatch.setattr(preflight, "freeze_evidence", lambda _brief: FROZEN)
+    storage = type("Storage", (), {"preflight_text_skill_generation_storage": lambda self: {"database": "test", "table": "generation_logs", "transaction_status": "rolled_back"}})()
+    result = preflight.preflight(payload, storage)
+    assert result["status"] == "ready" and result["source_ids"] == ["met-65625"]
+    assert result["model_calls"] == {"qwen": 0, "deepseek": 0, "image": 0}
 
 
 def test_experimental_readback_endpoint_is_owned_and_allowlisted(app_module, client, monkeypatch):

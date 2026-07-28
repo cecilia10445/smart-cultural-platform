@@ -142,7 +142,7 @@ async function openWorkspace(page, context, options = {}) {
       await fulfillJson(route, 200, { status: 'success' })
       return
     }
-    if (pathname === '/api/v2/cultural-products/generate') {
+    if (pathname === '/api/v2/cultural-products/generate' || pathname === '/api/v2/cultural-products/generate-with-text-skill') {
       generateRequests += 1
       generatePayloads.push(JSON.parse(route.request().postData() || '{}'))
       if (options.generateMode === 'hold-success') {
@@ -209,6 +209,28 @@ test.describe('桌面端生成工作台', () => {
     expect(harness.consoleErrors).toEqual([])
     expect(harness.pageErrors).toEqual([])
     expect(harness.forbiddenRequests).toEqual([])
+  })
+
+  test('三视图缺少任一条件字段时在浏览器阻止提交', async ({ page, context }) => {
+    const harness = await openWorkspace(page, context)
+    await fillBrief(page)
+    await page.getByLabel('产品展示方式').selectOption({ label: '三视图' })
+    await expect(page.getByLabel('正面设计要求')).toBeVisible()
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByText('请填写三视图的正面设计要求。')).toBeVisible()
+    expect(harness.generateRequests()).toBe(0)
+    await page.getByLabel('正面设计要求').fill('正面突出主纹样。')
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByText('请填写三视图的背面设计要求。')).toBeVisible()
+    expect(harness.generateRequests()).toBe(0)
+    await page.getByLabel('背面设计要求').fill('背面安排说明信息。')
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByText('请填写三视图的侧面设计要求。')).toBeVisible()
+    expect(harness.generateRequests()).toBe(0)
+    await page.getByLabel('侧面设计要求').fill('侧面说明结构厚度。')
+    await page.getByRole('button', { name: '生成文创产品' }).click()
+    await expect(page.getByRole('heading', { name: '测试数据：青花书签' })).toBeVisible()
+    expect(harness.generateRequests()).toBe(1)
   })
 
   test('历史 v2 详情使用结构化字段并支持图片预览', async ({ page, context }) => {

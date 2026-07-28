@@ -9,13 +9,17 @@ from backend.services.aigc_service import AIGCServiceError
 
 
 def brief(mode="flat_front_back", back="背面粗陶，无纹样，防滑磨砂处理"):
-    return validate_cultural_product_request({"brief_version": "1.0", "brief": {
+    value = {"brief_version": "1.0", "brief": {
         "product_type": "杯垫", "presentation_mode": mode,
         "back_design_requirements": back,
         "cultural_source": {"source_type": "artifact", "name": "青花瓷", "era": "明代", "creator": ""},
         "confirmed_facts": [], "form_and_material": "粗陶", "use_case": "家居", "target_audience": "成人",
         "visual_direction": {"preset_id": "x", "cultural_context": "青花", "medium": "陶瓷", "palette": "蓝白", "composition": "圆形", "additional_requirements": ""},
-    }})
+    }}
+    if mode == "three_view":
+        value["brief"]["front_design_requirements"] = "正面以青花纹样为识别中心。"
+        value["brief"]["side_design_requirements"] = "侧面保留连续留白和厚度信息。"
+    return validate_cultural_product_request(value)
 
 
 def test_flat_requires_explicit_back_requirements():

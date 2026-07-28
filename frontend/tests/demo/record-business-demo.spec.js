@@ -1,13 +1,29 @@
 import { expect, test } from '@playwright/test'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { assertAllVisibleEditableFieldsFilled, fillThreeViewBrief } from './business-demo-data.js'
 
 const email = process.env.DEMO_EMAIL
 const password = process.env.DEMO_PASSWORD
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
 
 test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page }, testInfo) => {
   test.skip(!email || !password, '需要通过 DEMO_EMAIL 和 DEMO_PASSWORD 提供运营账户。')
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') pageErrors.push(message.text()) })
+  if (process.env.DEMO_REPLAY_RESPONSE_PATH) {
+    const replay = JSON.parse(fs.readFileSync(process.env.DEMO_REPLAY_RESPONSE_PATH, 'utf8'))
+    await page.route('**/api/v2/cultural-products/generate-with-text-skill', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(replay),
+    }))
+  }
 
   await page.goto('/login.html', { waitUntil: 'networkidle' })
   await expect(page.getByRole('heading', { name: '智能文创平台' })).toBeVisible()
@@ -24,15 +40,21 @@ test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page
   await expect(page.getByRole('heading', { name: '把文化意象说清楚' })).toBeVisible()
   await page.waitForTimeout(1000)
 
-  await page.getByLabel('产品类型').fill('清代山水画意象折叠阅读灯')
-  await page.getByLabel('产品展示方式').selectOption('single_hero')
-  await page.getByLabel('文化原型或灵感来源').fill('清代山水画意象')
-  await page.getByLabel('已知时代（可选）').fill('清代')
-  await page.getByLabel('使用场景').fill('书房与旅行阅读')
-  await page.getByLabel('目标受众（可选）').fill('年轻阅读者、博物馆文创消费者')
-  await page.getByLabel('造型与材质').fill('竹木灯体、半透明纸质扩散罩；折叠后便于收纳与随身携带。')
-  await page.getByLabel('确认事实（每行一条）').fill('竹木灯体\n半透明纸质扩散罩\n可折叠收纳')
+  await fillThreeViewBrief(page)
+  await expect(page.getByLabel('产品展示方式')).toHaveValue('three_view')
+  await assertAllVisibleEditableFieldsFilled(page)
+  await page.waitForTimeout(1800)
+  const submitted = page.waitForRequest((request) => request.method() === 'POST'
+    && new URL(request.url()).pathname === '/api/v2/cultural-products/generate-with-text-skill')
   await page.getByRole('button', { name: '生成文创产品' }).click()
+  const submittedRequest = await submitted
+  const submittedPayload = submittedRequest.postDataJSON()
+  const submittedSha = crypto.createHash('sha256').update(canonicalJson(submittedPayload)).digest('hex')
+  if (process.env.DEMO_EXPECTED_PAYLOAD_SHA) expect(submittedSha).toBe(process.env.DEMO_EXPECTED_PAYLOAD_SHA)
+  if (process.env.DEMO_FORMAL_PAYLOAD_PATH) {
+    fs.mkdirSync(path.dirname(process.env.DEMO_FORMAL_PAYLOAD_PATH), { recursive: true })
+    fs.writeFileSync(process.env.DEMO_FORMAL_PAYLOAD_PATH, `${JSON.stringify(submittedPayload, null, 2)}\n`, 'utf8')
+  }
   await expect(page.getByTestId('text-skill-result')).toBeVisible({ timeout: 150_000 })
   await expect(page.getByRole('heading', { name: '真实业务文本结果' })).toBeVisible()
   await page.waitForTimeout(3000)
@@ -46,6 +68,8 @@ test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page
   expect(readback.status).toBe(200)
   expect(readback.body.data.run_id).toBe(runId)
   expect(readback.body.data.product_copy).toBeTruthy()
+  expect(readback.body.data.image_design_spec).toBeTruthy()
+  expect(Number(readback.body.data.actual_calls.database_writes)).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('business-result.png'), fullPage: true })
 
   await page.goto('/dashboard.html', { waitUntil: 'networkidle' })
@@ -59,6 +83,7 @@ test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page
   await expect(page.getByText('Qwen 请求')).toBeVisible()
   await expect(page.getByText('图片调用')).toBeVisible()
   await expect(page.getByText('数据库写入')).toBeVisible()
+  await expect(page.locator('.facts').getByText('1', { exact: true })).toBeVisible()
   await expect(page.getByText(/Judge|DeepSeek|评分|赢家|位置偏差/)).toHaveCount(0)
   const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
   expect(pageOverflow).toBe(false)

@@ -57,7 +57,7 @@ def validate_cultural_product_request(payload):
     allowed_brief = {
         "product_type", "cultural_source", "confirmed_facts", "form_and_material",
         "use_case", "target_audience", "visual_direction", "presentation_mode",
-        "back_design_requirements",
+        "front_design_requirements", "back_design_requirements", "side_design_requirements",
     }
     if set(brief) - allowed_brief:
         raise BriefValidationError("INVALID_REQUEST_FORMAT", "brief contains unsupported fields.")
@@ -98,6 +98,7 @@ def validate_cultural_product_request(payload):
     ) if value)
     if len(style_text) > 100:
         raise BriefValidationError("INVALID_VISUAL_DIRECTION", "visual_direction is too long for the current data contract.")
+    mode = _presentation_mode(brief.get("presentation_mode", "single_hero"))
     return {
         "brief_version": BRIEF_VERSION,
         "product_type": _string(brief.get("product_type"), "INVALID_PRODUCT_TYPE", "product_type"),
@@ -107,10 +108,15 @@ def validate_cultural_product_request(payload):
         "use_case": _string(brief.get("use_case"), "INVALID_REQUEST_FORMAT", "use_case"),
         "target_audience": _string(brief.get("target_audience"), "INVALID_REQUEST_FORMAT", "target_audience", False),
         # Legacy internal callers may omit the field; API v2 supplies it explicitly.
-        "presentation_mode": _presentation_mode(brief.get("presentation_mode", "single_hero")),
-        "back_design_requirements": _back_design_requirements(
-            brief.get("back_design_requirements"), _presentation_mode(brief.get("presentation_mode", "single_hero")),
-            "back_design_requirements" in brief,
+        "presentation_mode": mode,
+        "front_design_requirements": _design_requirements(
+            brief.get("front_design_requirements"), mode, "front_design_requirements",
+        ),
+        "back_design_requirements": _design_requirements(
+            brief.get("back_design_requirements"), mode, "back_design_requirements",
+        ),
+        "side_design_requirements": _design_requirements(
+            brief.get("side_design_requirements"), mode, "side_design_requirements",
         ),
         "visual_direction": normalized_direction,
     }
@@ -123,18 +129,23 @@ def _presentation_mode(value):
     return value
 
 
-def _back_design_requirements(value, mode, supplied=True):
+def _design_requirements(value, mode, field):
     if value is None:
         value = ""
     if not isinstance(value, str):
-        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements must be a string.")
+        raise BriefValidationError(f"INVALID_{field.upper()}", f"{field} must be a string.")
     value = value.strip()
     if len(value) > 300:
-        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements is too long.")
-    # Omitted field remains compatible with pre-Round15C callers; the new UI/API
-    # supplies it explicitly and an explicit empty value is rejected.
-    if mode == "flat_front_back" and supplied and not value:
-        raise BriefValidationError("INVALID_BACK_DESIGN_REQUIREMENTS", "back_design_requirements is required for flat_front_back.")
+        raise BriefValidationError(f"INVALID_{field.upper()}", f"{field} is too long.")
+    required = (
+        mode == "flat_front_back" and field == "back_design_requirements"
+    ) or (
+        mode == "three_view" and field in {
+            "front_design_requirements", "back_design_requirements", "side_design_requirements",
+        }
+    )
+    if required and not value:
+        raise BriefValidationError(f"INVALID_{field.upper()}", f"{field} is required for {mode}.")
     return value
 
 

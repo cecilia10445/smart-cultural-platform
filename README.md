@@ -179,12 +179,13 @@ npm run eval:security
 
 ## 功能演示
 
-仓库提供 Ubuntu Playwright 录像脚本：
-[`frontend/tests/demo/record-business-demo.spec.js`](frontend/tests/demo/record-business-demo.spec.js)。
-它从网页表单进入实验性文本 Skill 业务入口，演示本地文化证据检索、Pydantic AI Agent 原生 Skill tool call、结构化文本生成、一次 MySQL 业务写入与运营报告回看。
+[![智慧文创平台真实业务流程演示](docs/demo/smart-cultural-platform-demo-poster.png)](docs/demo/smart-cultural-platform-demo-1440p.webm)
 
-录像前需保持 Flask 与 Vite 服务运行，并通过环境变量提供运营账户；完整命令见
-[`frontend/tests/demo/README.md`](frontend/tests/demo/README.md)。该演示不调用图片模型，也不包含 DeepSeek Judge；文本 Skill 业务链路仍标注为 experimental。
+演示包含完整三视图 Brief、真实文化证据检索、Pydantic AI Agent 原生 Skill 调用、文本生成、一次 MySQL 事务写入及运营报告回看。录像展示的业务生成使用真实 Qwen 文本调用；图片模型调用为 0，DeepSeek Judge 不属于本次演示，文本 Skill 业务链路仍标注为 experimental。
+
+仓库同时提供可复录的 Ubuntu Playwright 脚本：
+[`frontend/tests/demo/record-business-demo.spec.js`](frontend/tests/demo/record-business-demo.spec.js)。录制前需保持 Flask 与 Vite 服务运行，并通过环境变量提供运营账户；完整命令见
+[`frontend/tests/demo/README.md`](frontend/tests/demo/README.md)。
 
 ## 数据与模型边界
 

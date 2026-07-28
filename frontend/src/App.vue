@@ -29,8 +29,8 @@
 
           <form class="creation-form" @submit.prevent="generateContent" novalidate>
             <div class="brief-grid">
-              <label class="field-block"><span>产品类型</span><input v-model="brief.product_type" :disabled="loading" placeholder="例如：书签" required></label>
-              <label class="field-block"><span>产品展示方式</span><select id="presentation-mode" v-model="brief.presentation_mode" :disabled="loading"><option value="flat_front_back">正反面</option><option value="three_view">三视图</option><option value="single_hero">单品主视图</option></select></label>
+              <label class="field-block" data-field-key="product_type" :class="{ 'field-invalid': fieldErrors.product_type }"><span>产品类型</span><input v-model="brief.product_type" :aria-invalid="Boolean(fieldErrors.product_type)" :disabled="loading" placeholder="例如：书签" required><small v-if="fieldErrors.product_type" class="field-error">{{ fieldErrors.product_type }}</small></label>
+              <label class="field-block" data-field-key="presentation_mode" :class="{ 'field-invalid': fieldErrors.presentation_mode }"><span>产品展示方式</span><select id="presentation-mode" v-model="brief.presentation_mode" :disabled="loading" @change="handlePresentationModeChange"><option value="flat_front_back">正反面</option><option value="three_view">三视图</option><option value="single_hero">单品主视图</option></select><small v-if="fieldErrors.presentation_mode" class="field-error">{{ fieldErrors.presentation_mode }}</small></label>
               <label class="field-block"><span>来源类型</span><select v-model="brief.cultural_source.source_type" :disabled="loading"><option value="artifact">器物或纹样</option><option value="heritage">非遗技艺</option><option value="literature">文学意象</option></select></label>
               <label class="field-block"><span>文化原型或灵感来源</span><input v-model="brief.cultural_source.name" :disabled="loading" placeholder="例如：青花折枝纹" required></label>
               <label class="field-block"><span>已知时代（可选）</span><input v-model="brief.cultural_source.era" :disabled="loading" placeholder="例如：明代"></label>
@@ -73,6 +73,15 @@
               <input id="supplement" v-model="supplement" type="text" :maxlength="supplementMaxLength" :disabled="loading" placeholder="可补充材质、光线、镜头或不希望出现的元素" aria-describedby="supplement-help">
               <p id="supplement-help" class="field-help">这项不会改写上面的主题内容。</p>
             </div>
+
+            <section v-if="brief.presentation_mode === 'three_view'" class="view-requirements" aria-labelledby="three-view-title">
+              <h2 id="three-view-title">三视图设计要求</h2>
+              <p class="field-help">分别说明正面、背面与侧面的信息层级；三项将作为同一份业务 Brief 的条件字段提交。</p>
+              <label class="field-block" data-field-key="front_design_requirements" :class="{ 'field-invalid': fieldErrors.front_design_requirements }"><span>正面设计要求</span><textarea v-model="brief.front_design_requirements" rows="3" :disabled="loading" :aria-invalid="Boolean(fieldErrors.front_design_requirements)" required></textarea><small v-if="fieldErrors.front_design_requirements" class="field-error">{{ fieldErrors.front_design_requirements }}</small></label>
+              <label class="field-block" data-field-key="back_design_requirements" :class="{ 'field-invalid': fieldErrors.back_design_requirements }"><span>背面设计要求</span><textarea v-model="brief.back_design_requirements" rows="3" :disabled="loading" :aria-invalid="Boolean(fieldErrors.back_design_requirements)" required></textarea><small v-if="fieldErrors.back_design_requirements" class="field-error">{{ fieldErrors.back_design_requirements }}</small></label>
+              <label class="field-block" data-field-key="side_design_requirements" :class="{ 'field-invalid': fieldErrors.side_design_requirements }"><span>侧面设计要求</span><textarea v-model="brief.side_design_requirements" rows="3" :disabled="loading" :aria-invalid="Boolean(fieldErrors.side_design_requirements)" required></textarea><small v-if="fieldErrors.side_design_requirements" class="field-error">{{ fieldErrors.side_design_requirements }}</small></label>
+            </section>
+            <label v-else-if="brief.presentation_mode === 'flat_front_back'" class="field-block" data-field-key="back_design_requirements" :class="{ 'field-invalid': fieldErrors.back_design_requirements }"><span>背面设计要求</span><textarea v-model="brief.back_design_requirements" rows="3" :disabled="loading" :aria-invalid="Boolean(fieldErrors.back_design_requirements)" required></textarea><small v-if="fieldErrors.back_design_requirements" class="field-error">{{ fieldErrors.back_design_requirements }}</small></label>
 
             <details class="style-preview">
               <summary>查看本次画面描述</summary>
@@ -297,12 +306,16 @@ export default {
         use_case: '',
         target_audience: '',
         presentation_mode: 'single_hero',
+        front_design_requirements: '',
+        back_design_requirements: '',
+        side_design_requirements: '',
       },
       dimensions: { ...DEFAULT_DIRECTION.dimensions },
       selectedDirectionId: DEFAULT_DIRECTION_ID,
       supplement: '',
       loading: false,
       error: '',
+      fieldErrors: {},
       sessionExpired: false,
       result: null,
       detailOpen: false,
@@ -380,6 +393,7 @@ export default {
       if (status === 403) return `当前账户无权${subject}。`
       if (status === 503) return `${subject}暂时不可用，请稍后重试。`
       if (status === 502) return `${subject}服务暂时不可用，请稍后重试。`
+      if (status === 400) return error.response?.data?.message || '请检查填写内容后再提交。'
       if (status) return `${subject}未能完成，请稍后重试。`
       if (error.request) return `无法连接${subject}，请检查网络后重试。`
       return `${subject}返回异常，请稍后重试。`
@@ -391,14 +405,53 @@ export default {
     handleDimensionChange() {
       this.selectedDirectionId = null
     },
+    handlePresentationModeChange() {
+      const fields = this.brief.presentation_mode === 'three_view'
+        ? []
+        : this.brief.presentation_mode === 'flat_front_back'
+          ? ['front_design_requirements', 'side_design_requirements']
+          : ['front_design_requirements', 'back_design_requirements', 'side_design_requirements']
+      fields.forEach((field) => { this.fieldErrors[field] = '' })
+      if (this.brief.presentation_mode === 'single_hero') {
+        this.brief.front_design_requirements = ''
+        this.brief.back_design_requirements = ''
+        this.brief.side_design_requirements = ''
+      }
+    },
+    validateBrief() {
+      const errors = {}
+      if (!this.brief.product_type.trim()) errors.product_type = '请填写产品类型。'
+      if (!this.brief.cultural_source.name.trim()) errors.cultural_source = '请填写文化原型或灵感来源。'
+      if (!this.brief.form_and_material.trim()) errors.form_and_material = '请填写造型与材质。'
+      if (!this.brief.use_case.trim()) errors.use_case = '请填写使用场景。'
+      if (this.brief.presentation_mode === 'three_view') {
+        if (!this.brief.front_design_requirements.trim()) errors.front_design_requirements = '请填写三视图的正面设计要求。'
+        if (!this.brief.back_design_requirements.trim()) errors.back_design_requirements = '请填写三视图的背面设计要求。'
+        if (!this.brief.side_design_requirements.trim()) errors.side_design_requirements = '请填写三视图的侧面设计要求。'
+      } else if (this.brief.presentation_mode === 'flat_front_back' && !this.brief.back_design_requirements.trim()) {
+        errors.back_design_requirements = '请填写正反面展示的背面设计要求。'
+      }
+      this.fieldErrors = errors
+      return Object.keys(errors).length === 0
+    },
+    focusFirstInvalid() {
+      const first = Object.keys(this.fieldErrors)[0]
+      if (!first) return
+      this.$nextTick(() => {
+        const input = document.querySelector(`[data-field-key="${first}"] input, [data-field-key="${first}"] textarea, [data-field-key="${first}"] select`)
+        input?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        input?.focus({ preventScroll: true })
+      })
+    },
     clearAll() {
       this.prompt = ''
       this.confirmedFactsText = ''
-      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '', presentation_mode: 'single_hero' }
+      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '', presentation_mode: 'single_hero', front_design_requirements: '', back_design_requirements: '', side_design_requirements: '' }
       this.dimensions = { ...DEFAULT_DIRECTION.dimensions }
       this.selectedDirectionId = DEFAULT_DIRECTION_ID
       this.supplement = ''
       this.error = ''
+      this.fieldErrors = {}
       this.sessionExpired = false
       this.result = null
       this.resultStyle = ''
@@ -448,8 +501,9 @@ export default {
     },
     async generateContent() {
       if (this.loading) return
-      if (!this.brief.product_type.trim() || !this.brief.cultural_source.name.trim() || !this.brief.form_and_material.trim() || !this.brief.use_case.trim()) {
-        this.error = '请填写产品类型、文化来源、造型与材质和使用场景。'
+      if (!this.validateBrief()) {
+        this.error = '请补全标注的必填项后再提交。'
+        this.focusFirstInvalid()
         return
       }
       const headers = this.authHeaders()
@@ -461,6 +515,7 @@ export default {
       const style = this.currentStyle
       this.loading = true
       this.error = ''
+      this.fieldErrors = {}
       this.sessionExpired = false
       this.result = null
       this.resultStyle = ''
@@ -480,6 +535,11 @@ export default {
         this.loadHistory()
       } catch (error) {
         const message = this.requestError(error, '生成')
+        const field = error.response?.data?.field
+        if (field) {
+          this.fieldErrors = { [field]: message }
+          this.focusFirstInvalid()
+        }
         this.error = this.sessionExpired ? '' : message
       } finally {
         this.loading = false
@@ -882,6 +942,13 @@ textarea:focus, input:focus, select:focus {
   font-size: .86rem;
   line-height: 1.6;
 }
+.field-invalid input, .field-invalid textarea, .field-invalid select {
+  border-color: #a44536;
+  box-shadow: inset 0 -2px 0 #a44536;
+}
+.field-error { display: block; margin-top: .45rem; color: #a44536; font-size: .84rem; line-height: 1.5; }
+.view-requirements { display: grid; gap: 1.1rem; padding: 1.3rem; border: 1px solid #c9c3b6; background: #f9f7f0; }
+.view-requirements h2 { margin: 0; font-size: 1.18rem; }
 .direction-fieldset {
   padding: 1.3rem;
   border: 1px solid #c9c3b6;
