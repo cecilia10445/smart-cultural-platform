@@ -33,6 +33,7 @@ REAL_BUSINESS_SMOKE_DATABASE = "aigc_platform_demo"
 PROMPTFOO_LATEST_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.json"
 PROMPTFOO_LATEST_HTML_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.html"
 ROUND17C_REPORT_ROOT = Path(project_root) / "evaluation" / "artifacts" / "round-17c-clean"
+ROUND17C_BUSINESS_REPORT_ROOT = Path(project_root) / "evaluation" / "artifacts" / "round-17c-business"
 
 print(f"📁 项目根目录: {project_root}")
 print(f"📁 前端目录: {frontend_dir}")
@@ -777,6 +778,31 @@ def generate_cultural_product_api():
     log_event('generate', {'user_id': user_id, 'generation_kind': 'cultural_product', 'log_id': log_id})
     return jsonify(response_data)
 
+
+@app.route('/api/v2/cultural-products/generate-with-text-skill', methods=['POST'])
+def generate_cultural_product_with_text_skill_api():
+    """Experimental, text-only business flow; the existing V2 image route is unchanged."""
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before generating.", 401)
+    try:
+        brief = validate_cultural_product_request(request.get_json(silent=True))
+    except BriefValidationError as error:
+        return api_error(error.code, error.message, 400)
+    try:
+        from backend.services.round17c_business import BusinessGenerationError, generate_with_text_skill
+        result = generate_with_text_skill(
+            brief,
+            api_key=settings.dashscope_api_key,
+            model_name=settings.dashscope_text_model,
+            base_url=settings.dashscope_openai_base_url,
+            artifact_root=ROUND17C_BUSINESS_REPORT_ROOT,
+        )
+        result['request_id'] = current_request_id()
+        return jsonify(result)
+    except BusinessGenerationError as error:
+        return api_error(error.code, "Experimental text generation could not be completed.", 502, False)
+
 # 运营质量报告接口（固定本地 Promptfoo 输出，禁止客户端传路径）
 @app.route('/api/dashboard/quality-report', methods=['GET'])
 def get_quality_report():
@@ -906,6 +932,35 @@ def get_round17c_quality_report(run_id):
         return jsonify({'status': 'success', 'data': public_run(ROUND17C_REPORT_ROOT, run_id)})
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return api_error("QUALITY_REPORT_UNAVAILABLE", "Round 17C report is unavailable.", 503, True, True)
+
+
+@app.route('/api/dashboard/business-generation-reports', methods=['GET'])
+def list_round17c_business_reports():
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing business reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        from backend.round17c_business_reports import list_business_runs
+        runs = list_business_runs(ROUND17C_BUSINESS_REPORT_ROOT)
+        return jsonify({'status': 'success', 'data': {'runs': runs, 'latest_run_id': runs[0]['run_id'] if runs else None}})
+    except (OSError, UnicodeError, ValueError):
+        return api_error("BUSINESS_REPORT_UNAVAILABLE", "Business generation reports are unavailable.", 503, True, True)
+
+
+@app.route('/api/dashboard/business-generation-reports/<run_id>', methods=['GET'])
+def get_round17c_business_report(run_id):
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing business reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        from backend.round17c_business_reports import BusinessReportUnavailable, public_business_run
+        return jsonify({'status': 'success', 'data': public_business_run(ROUND17C_BUSINESS_REPORT_ROOT, run_id)})
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return api_error("BUSINESS_REPORT_UNAVAILABLE", "Business generation report is unavailable.", 503, True, True)
 
 # 运营数据接口（需要管理员权限）
 @app.route('/api/dashboard/stats', methods=['GET'])

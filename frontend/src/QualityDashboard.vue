@@ -1,268 +1,55 @@
 <template>
-  <main class="quality-page">
-    <header class="quality-header">
-      <a class="brand" href="/index.html" aria-label="智能文创平台，返回创作页">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>智能文创平台</span>
-      </a>
-      <div class="header-title">
-        <span>运营空间</span>
-        <strong>AI 质量评测</strong>
-      </div>
-      <div class="account-area">
-        <span>{{ userName }}</span>
-        <button type="button" class="quiet-button" @click="logout">退出登录</button>
-      </div>
-    </header>
-
-    <div class="quality-main">
-      <section class="intro-row" aria-labelledby="quality-title">
-        <div>
-          <p class="eyebrow">OFFLINE SECURITY &amp; ROBUSTNESS REGRESSION</p>
-          <h1 id="quality-title">把评测结果看清楚</h1>
-          <p class="intro-copy">只展示脱敏后的 Promptfoo 回归结果，帮助运营团队快速识别结构、引用、事实和泄漏风险。</p>
-        </div>
-        <div class="intro-actions">
-          <button type="button" class="secondary-button" :disabled="loading" @click="loadReport">{{ loading ? '正在刷新' : '刷新评测' }}</button>
-          <button type="button" class="primary-button" :disabled="!report || downloading" @click="downloadReport">{{ downloading ? '正在准备报告' : '下载完整 Promptfoo 报告' }}</button>
-        </div>
-      </section>
-
-      <div v-if="qualityError" class="state-card unavailable" role="alert">
-        <span class="state-symbol" aria-hidden="true">!</span>
-        <div><strong>{{ qualityError }}</strong><p>请检查最近一次离线评测产物后再刷新。</p></div>
-        <a class="text-link" href="/login.html">返回登录</a>
-      </div>
-      <div v-else-if="loading" class="state-card loading-state" aria-live="polite">正在读取最近一次离线评测。</div>
-
-      <section class="round17c-picker" aria-labelledby="round17c-title">
-        <div><p class="eyebrow">ROUND 17C · TEXT-ONLY A/B</p><h2 id="round17c-title">受控文本评测记录</h2><p>文本交付、工具轨迹与评测完整性分开呈现；图片与数据库调用必须为 0。</p></div>
-        <label>选择历史运行<select v-model="selectedRunId" :disabled="round17cLoading || !round17cRuns.length" @change="loadRound17cReport"><option value="">暂无可用运行</option><option v-for="run in round17cRuns" :key="run.run_id" :value="run.run_id">{{ formatDate(run.started_at) }} · {{ run.run_id }}</option></select></label>
-      </section>
-      <div v-if="round17cError" class="state-card unavailable" role="status">{{ round17cError }}</div>
-      <section v-if="round17cReport" class="round17c-report" aria-labelledby="round17c-report-title">
-        <div class="section-heading"><p class="eyebrow">SEALED ARTIFACT · TEXT ONLY</p><h2 id="round17c-report-title">A/B 交付与审计状态</h2></div>
-        <div class="round17c-statuses"><span>技术：{{ round17cReport.technical_status }}</span><span>评测：{{ round17cReport.evaluation_validity }}</span><span>完整性：{{ round17cReport.integrity_status }}</span></div>
-        <p v-if="round17cReport.evaluation_validity !== 'comparable'" class="round17c-inconclusive">本次比较不可下定论；不显示赢家。</p>
-        <div v-if="round17cReport.arms?.baseline && round17cReport.arms?.skill_guided" class="ab-grid"><article v-for="arm in armOrder" :key="arm" class="ab-card"><h3>{{ arm === 'baseline' ? 'A · Baseline' : 'B · Skill-guided' }}</h3><p class="arm-meta">{{ armLabel(arm) }}</p><h4>产品文案</h4><p>{{ round17cReport.arms[arm].product_copy }}</p><h4>文字版设计说明</h4><p>{{ round17cReport.arms[arm].image_design_spec }}</p><dl class="arm-facts"><div><dt>延迟</dt><dd>{{ formatLatency(round17cReport.arms[arm].latency_ms) }}</dd></div><div><dt>请求</dt><dd>{{ round17cReport.arms[arm].requests ?? '未记录' }}</dd></div><div><dt>来源</dt><dd>{{ round17cReport.arms[arm].used_source_ids.length }}</dd></div></dl><div v-if="dimensionEntries(round17cReport.arms[arm]).length" class="dimension-list"><div v-for="[name, score] in dimensionEntries(round17cReport.arms[arm])" :key="name"><span>{{ dimensionLabel(name) }}</span><strong>{{ formatFivePoint(score) }}</strong></div></div><p v-if="arm === 'skill_guided'" class="trajectory">文本 Skill 轨迹：{{ round17cReport.arms[arm].tool_trajectory.length }} 个已记录步骤</p></article></div>
-        <p v-else class="round17c-inconclusive">该运行尚未产生可比较的双臂最终交付。</p>
-      </section>
-
-      <template v-if="report">
-        <section class="run-summary" aria-labelledby="run-title">
-          <div class="section-label"><span class="status-dot" :data-status="report.run_status"></span><span>最近一次评测</span></div>
-          <div class="run-summary-main">
-            <div><h2 id="run-title">{{ statusLabel(report.run_status) }}</h2><p>{{ formatDate(report.generated_at) }} · {{ report.run_id }}</p></div>
-            <div class="trust-note"><strong>离线安全与鲁棒性回归</strong><span>executor_type=stub · measurement_scope=harness_self_test</span></div>
-          </div>
-        </section>
-
-        <section aria-labelledby="metrics-title">
-          <div class="section-heading"><p class="eyebrow">MEASUREMENT</p><h2 id="metrics-title">核心指标</h2></div>
-          <div class="metric-grid">
-            <article v-for="metric in metrics" :key="metric.key" class="metric-card"><span>{{ metric.label }}</span><strong>{{ displayMetric(metric.key) }}</strong><small>{{ metric.note }}</small></article>
-          </div>
-        </section>
-
-        <section class="risk-section" aria-labelledby="risk-title">
-          <div class="section-heading"><p class="eyebrow">RISK REGISTER</p><h2 id="risk-title">风险类别</h2></div>
-          <div class="risk-grid">
-            <article v-for="risk in riskMetrics" :key="risk.key" class="risk-card"><div><span>{{ risk.label }}</span><small>{{ risk.note }}</small></div><strong :data-alert="report[risk.key] > 0">{{ report[risk.key] }}</strong></article>
-          </div>
-          <dl class="category-list"><div v-for="(counts, category) in report.security_categories" :key="category"><dt>{{ categoryLabel(category) }}</dt><dd><span>{{ counts.passed }} 通过</span><span>{{ counts.failed }} 失败</span><span>{{ counts.error }} 错误</span></dd></div></dl>
-        </section>
-
-        <section class="cases-section" aria-labelledby="cases-title">
-          <div class="section-heading cases-heading"><div><p class="eyebrow">REDACTED CASE REGISTER</p><h2 id="cases-title">逐用例脱敏明细</h2></div><button type="button" class="secondary-button" @click="showCases = !showCases">{{ showCases ? '收起用例' : `查看全部 ${report.cases.length} 项` }}</button></div>
-          <div v-if="showCases" class="cases-panel">
-            <div class="filter-row" role="group" aria-label="按评测结果筛选"><button v-for="filter in filters" :key="filter.id" type="button" class="filter-button" :class="{ active: activeFilter === filter.id }" :aria-pressed="activeFilter === filter.id" @click="activeFilter = filter.id">{{ filter.label }}<span>{{ filterCount(filter.id) }}</span></button></div>
-            <div class="case-list"><article v-for="caseItem in filteredCases" :key="caseItem.case_id" class="case-row"><div class="case-name"><span class="outcome-mark" :data-outcome="caseItem.outcome"></span><strong>{{ categoryLabel(caseItem.category) }}</strong><small>{{ caseItem.case_id }}</small></div><dl><div><dt>结果</dt><dd>{{ outcomeLabel(caseItem.outcome) }}</dd></div><div><dt>稳定码</dt><dd>{{ caseItem.stable_code }}</dd></div><div><dt>断言</dt><dd>{{ assertionLabel(caseItem.assertion_name) }}</dd></div></dl></article></div>
-          </div>
-        </section>
-
-        <p class="disclaimer">本页是离线安全与鲁棒性回归的脱敏汇总；23/23 通过只代表当前 Stub 测试契约通过，不代表真实模型绝对安全。</p>
+  <main class="report-page">
+    <header><a href="/index.html" aria-label="返回创作页">智能文创平台</a><span>运营空间 · 业务生成报告</span><button type="button" @click="logout">退出登录</button></header>
+    <section class="hero"><p>EXPERIMENTAL TEXT SKILL WORKFLOW</p><h1>把一次真实生成看清楚</h1><p>质量 Judge 暂未启用。本页只展示经完整性校验的业务生成轨迹，不展示评分或候选结论。</p></section>
+    <section class="selector" aria-labelledby="history-title">
+      <div><p>HISTORY</p><h2 id="history-title">业务生成记录</h2></div>
+      <label>选择历史运行<select v-model="selectedRunId" :disabled="loading || !runs.length" @change="loadRun"><option value="">暂无已封存记录</option><option v-for="run in runs" :key="run.run_id" :value="run.run_id">{{ formatDate(run.started_at) }} · {{ run.run_id }}</option></select></label>
+    </section>
+    <section v-if="error" class="state error" role="alert">{{ error }}</section>
+    <section v-else-if="loading" class="state">正在读取业务生成报告…</section>
+    <section v-else-if="report" class="report" aria-labelledby="report-title">
+      <div class="status"><span>技术状态：{{ report.technical_status }}</span><span>完整性：{{ report.integrity_status }}</span><span>Judge：未启用</span></div>
+      <div v-if="!report.report || report.integrity_status !== 'verified'" class="state error">此运行未通过完整性校验或未完成；已拒绝展示业务输出。</div>
+      <template v-else>
+        <div class="run-title"><div><p>SEALED BUSINESS ARTIFACT</p><h2 id="report-title">{{ report.run_id }}</h2></div><button type="button" @click="loadRuns">刷新</button></div>
+        <dl class="facts"><div><dt>RAG</dt><dd>{{ report.report.rag_status }}</dd></div><div><dt>Text Skill</dt><dd>{{ report.report.selected_skill_id }} · {{ report.report.skill_version }}</dd></div><div><dt>Qwen</dt><dd>{{ report.report.actual_calls?.qwen ?? '未记录' }}</dd></div><div><dt>DeepSeek / 图片 / DB</dt><dd>{{ report.report.actual_calls?.deepseek ?? 0 }} / {{ report.report.actual_calls?.image ?? 0 }} / {{ report.report.actual_calls?.database_writes ?? 0 }}</dd></div></dl>
+        <div class="columns"><article><p>PRODUCT COPY</p><h3>产品文案</h3><p>{{ report.output.product_copy }}</p></article><article><p>DESIGN SPEC</p><h3>文字版设计说明</h3><p>{{ report.output.image_design_spec }}</p></article></div>
+        <div class="details"><article><h3>RAG 来源</h3><p>{{ report.report.source_ids.join(' · ') }}</p></article><article><h3>Agent 工具轨迹</h3><ul><li v-for="(step, index) in report.report.tool_trajectory" :key="index">{{ step.tool }} <small>{{ step.skill_id || '' }}</small></li></ul></article><article><h3>运行数据</h3><p>规划 {{ formatLatency(report.report.planner_latency_ms) }} · 最终生成 {{ formatLatency(report.report.final_latency_ms) }}</p><p>Skill 正文 SHA-256：{{ report.report.skill_body_sha256 }}</p></article></div>
       </template>
-    </div>
+    </section>
+    <section v-else class="state">尚无已封存的业务生成报告。</section>
   </main>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-
-const report = ref(null)
-const loading = ref(true)
-const downloading = ref(false)
-const qualityError = ref('')
-const userName = ref('运营管理员')
-const showCases = ref(false)
-const activeFilter = ref('all')
-const round17cRuns = ref([])
-const selectedRunId = ref('')
-const round17cReport = ref(null)
-const round17cError = ref('')
-const round17cLoading = ref(false)
-const armOrder = ['baseline', 'skill_guided']
-
-const metrics = [
-  { key: 'total', label: '总用例', note: '当前回归范围' },
-  { key: 'passed', label: '通过', note: '边界保持有效' },
-  { key: 'failed', label: '失败', note: '需要复核' },
-  { key: 'error', label: '错误', note: '执行异常' },
-  { key: 'attack_success_rate', label: '攻击成功率', note: '失败 / 总用例' },
-]
-const riskMetrics = [
-  { key: 'leakage_count', label: 'Prompt / 凭据泄漏', note: 'Prompt、凭据、Authorization' },
-  { key: 'invalid_citation_count', label: '非法引用', note: '来源与证据边界' },
-  { key: 'factual_overreach_count', label: '事实越界', note: '时代、作者、机构与馆藏' },
-  { key: 'invalid_structure_count', label: '结构错误', note: '输入与响应契约' },
-]
-const filters = [
-  { id: 'all', label: '全部' },
-  { id: 'passed', label: '通过' },
-  { id: 'failed', label: '失败' },
-  { id: 'error', label: '错误' },
-]
-const categoryNames = {
-  'unknown-field': '未知字段', 'invalid-json': '非法 JSON', 'field-type': '类型错误',
-  'long-input': '超长输入', 'long-facts': '超长事实数组', 'malicious-url': '恶意 URL',
-  xss: 'HTML / XSS', unicode: 'Unicode 绕过', 'fake-origin': '伪造数据来源',
-  'fake-source': '伪造来源引用', 'malformed-evidence': '损坏证据', 'out-of-bounds-source': '越界引用',
-  'grounded-empty-citation': 'grounded 引用冲突', 'insufficient-with-citation': '资料不足引用冲突',
-  'prompt-leak': 'Prompt 泄漏', 'credential-leak': '凭据泄漏', 'authorization-leak': 'Authorization 泄漏',
-  'fake-era': '伪造年代', 'fake-author': '伪造作者', 'fake-endorsement': '伪造机构背书',
-  'fake-collection': '伪造官方馆藏', 'fake-history': '伪造历史事实', 'web-as-museum': '网页冒充馆藏',
-}
-const token = () => localStorage.getItem('adminToken') || localStorage.getItem('token')
-
-const normalizedReport = (value) => {
-  const data = value?.data
-  if (value?.status !== 'success' || !data || !Array.isArray(data.cases) || data.cases.some((item) => {
-    return !item || typeof item.case_id !== 'string' || !categoryNames[item.category] || !['passed', 'failed', 'error'].includes(item.outcome) || typeof item.stable_code !== 'string' || typeof item.assertion_name !== 'string'
-  })) return null
-  return data
-}
-
-const loadReport = async () => {
-  loading.value = true
-  qualityError.value = ''
-  try {
-    if (!token()) { qualityError.value = '登录状态已失效，请重新登录。'; return }
-    const response = await fetch('/api/dashboard/quality-report', { headers: { Authorization: `Bearer ${token()}` } })
-    const body = await response.json().catch(() => ({}))
-    if (response.status === 401 || body.code === 'AUTH_REQUIRED') { qualityError.value = '登录状态已失效，请重新登录。'; return }
-    if (response.status === 503 || body.code === 'QUALITY_REPORT_UNAVAILABLE') { qualityError.value = '最近评测报告暂不可用。'; return }
-    if (!response.ok) { qualityError.value = '质量评测加载失败，请稍后重试。'; return }
-    const safeReport = normalizedReport(body)
-    if (!safeReport) { qualityError.value = '最近评测报告暂不可用。'; return }
-    report.value = safeReport
-  } catch { qualityError.value = '质量评测加载失败，请检查网络后重试。' }
-  finally { loading.value = false }
-}
-
-const validArm = (value) => value && typeof value.product_copy === 'string' && typeof value.image_design_spec === 'string' && Array.isArray(value.used_source_ids) && !value.product_copy.trim().startsWith('{') && !value.image_design_spec.trim().startsWith('{')
-const normalizedRound17c = (value) => {
-  const data = value?.data
-  if (value?.status !== 'success' || !data || !['not_run', 'blocked', 'completed', 'failed'].includes(data.technical_status) || !['not_run', 'comparable', 'evaluation_inconclusive', 'judge_parse_error', 'judge_inconsistent', 'inconclusive_position_bias'].includes(data.evaluation_validity) || !['verified', 'failed'].includes(data.integrity_status)) return null
-  if (data.technical_status === 'completed' && (!validArm(data.arms?.baseline) || !validArm(data.arms?.skill_guided))) return null
-  return data
-}
-
-const loadRound17cReport = async () => {
-  if (!selectedRunId.value) { round17cReport.value = null; return }
-  round17cLoading.value = true; round17cError.value = ''
-  try {
-    const response = await fetch(`/api/dashboard/quality-reports/${encodeURIComponent(selectedRunId.value)}`, { headers: { Authorization: `Bearer ${token()}` } })
-    const body = await response.json().catch(() => ({}))
-    if (response.status === 401) { round17cError.value = '登录状态已失效，请重新登录。'; return }
-    if (response.status === 503) { round17cError.value = '该次 Round 17C 报告不可用或未通过完整性校验。'; return }
-    const safe = normalizedRound17c(body)
-    if (!safe) { round17cError.value = 'Round 17C 报告格式不可信，已拒绝展示。'; return }
-    round17cReport.value = safe
-  } catch { round17cError.value = 'Round 17C 报告加载失败。' }
-  finally { round17cLoading.value = false }
-}
-
-const loadRound17cRuns = async () => {
-  try {
-    const response = await fetch('/api/dashboard/quality-reports', { headers: { Authorization: `Bearer ${token()}` } })
-    const body = await response.json().catch(() => ({}))
-    if (!response.ok || body.status !== 'success' || !Array.isArray(body.data?.runs)) return
-    round17cRuns.value = body.data.runs
-    selectedRunId.value = body.data.latest_run_id || ''
-    await loadRound17cReport()
-  } catch { round17cError.value = 'Round 17C 历史报告暂不可用。' }
-}
-
-const downloadReport = async () => {
-  if (!token() || downloading.value) return
-  downloading.value = true
-  qualityError.value = ''
-  try {
-    const response = await fetch('/api/dashboard/quality-report/html', { headers: { Authorization: `Bearer ${token()}` } })
-    if (response.status === 401) { qualityError.value = '登录状态已失效，请重新登录。'; return }
-    if (response.status === 503) { qualityError.value = '完整评测报告暂不可用。'; return }
-    if (!response.ok) { qualityError.value = '完整评测报告下载失败，请稍后重试。'; return }
-    const url = URL.createObjectURL(await response.blob())
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'promptfoo-security-report.html'
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
-  } catch { qualityError.value = '完整评测报告下载失败，请检查网络后重试。' }
-  finally { downloading.value = false }
-}
-
-const filteredCases = computed(() => !report.value ? [] : report.value.cases.filter((item) => activeFilter.value === 'all' || item.outcome === activeFilter.value))
-const filterCount = (filter) => filter === 'all' ? report.value.cases.length : report.value.cases.filter((item) => item.outcome === filter).length
-const categoryLabel = (category) => categoryNames[category] || '其他安全边界'
-const outcomeLabel = (outcome) => ({ passed: '通过', failed: '失败', error: '错误' }[outcome] || '未知')
-const assertionLabel = (name) => ({ security_boundary: '安全边界断言', json_shape: 'JSON 结构断言', provider_error: 'Provider 错误' }[name] || '固定断言')
-const statusLabel = (status) => ({ passed: '评测通过', failed: '存在失败用例', error: '评测执行异常' }[status] || '状态未知')
-const displayMetric = (key) => key === 'attack_success_rate' ? `${Math.round(Number(report.value[key] || 0) * 100)}%` : report.value[key]
-const formatDate = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间不可用' : date.toLocaleString('zh-CN') }
+import { onMounted, ref } from 'vue'
+const runs = ref([]), selectedRunId = ref(''), report = ref(null), loading = ref(false), error = ref('')
+const token = () => localStorage.getItem('adminToken') || localStorage.getItem('token') || ''
+const formatDate = (value) => { const d = new Date(value); return Number.isNaN(d.getTime()) ? '时间未记录' : d.toLocaleString('zh-CN') }
 const formatLatency = (value) => typeof value === 'number' ? `${value.toFixed(0)} ms` : '未记录'
-const formatFivePoint = (value) => typeof value?.score === 'number' ? `${value.score.toFixed(1)} / 5` : '未评分'
-const dimensionEntries = (arm) => Object.entries(arm.dimensions || {})
-const dimensionLabel = (value) => ({ professional_readability: '专业与可读性', product_title_recognition: '标题辨识度', brief_fit: 'Brief 贴合', cultural_specificity: '文化具体性', design_executability: '设计可执行性', factual_fidelity: '事实忠实', delivery_format: '交付格式', conciseness_non_repetition: '简洁无重复' }[value] || value)
-const armLabel = (arm) => arm === 'baseline' ? '无 Skill、无工具的共同最终生成器' : '仅文本 Skill 的规划器 + 共同最终生成器'
-const logout = () => { localStorage.removeItem('adminToken'); localStorage.removeItem('adminUser'); localStorage.removeItem('token'); localStorage.removeItem('userInfo'); window.location.href = '/login.html' }
-
-onMounted(() => {
-  const storedUser = localStorage.getItem('adminUser') || localStorage.getItem('userInfo')
-  if (storedUser) {
-    try { const parsed = JSON.parse(storedUser); if (parsed.role === 'admin') userName.value = parsed.name || parsed.username || userName.value } catch { /* ignore malformed local identity */ }
-  }
-  loadReport()
-  loadRound17cRuns()
-})
+const loadRun = async () => {
+  if (!selectedRunId.value) { report.value = null; return }
+  loading.value = true; error.value = ''
+  try {
+    const r = await fetch(`/api/dashboard/business-generation-reports/${encodeURIComponent(selectedRunId.value)}`, { headers: { Authorization: `Bearer ${token()}` } })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok || body.status !== 'success') throw new Error('业务生成报告暂不可用。')
+    report.value = body.data
+  } catch (e) { report.value = null; error.value = e.message || '业务生成报告加载失败。' } finally { loading.value = false }
+}
+const loadRuns = async () => {
+  loading.value = true; error.value = ''
+  try {
+    const r = await fetch('/api/dashboard/business-generation-reports', { headers: { Authorization: `Bearer ${token()}` } }); const body = await r.json().catch(() => ({}))
+    if (!r.ok || body.status !== 'success') throw new Error('业务生成报告历史暂不可用。')
+    runs.value = Array.isArray(body.data?.runs) ? body.data.runs : []; selectedRunId.value = body.data?.latest_run_id || ''; await loadRun()
+  } catch (e) { error.value = e.message || '业务生成报告历史加载失败。' } finally { loading.value = false }
+}
+const logout = () => { for (const key of ['adminToken','adminUser','token','userInfo']) localStorage.removeItem(key); window.location.href = '/login.html' }
+onMounted(loadRuns)
 </script>
 
 <style>
-:root { color: #17221f; background: #f3f0e8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
-* { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; background: #f3f0e8; }
-button { font: inherit; }
-button:focus-visible, a:focus-visible { outline: 3px solid #a44536; outline-offset: 3px; }
-.quality-page { min-height: 100vh; overflow-x: hidden; background: #f3f0e8; }
-.quality-header { min-height: 74px; padding: 0 clamp(1rem, 5vw, 5rem); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1.5rem; border-bottom: 1px solid #c9c3b6; background: #fbfaf5; }
-.brand { display: inline-flex; align-items: center; gap: .65rem; width: fit-content; color: #17221f; text-decoration: none; font-weight: 750; letter-spacing: .04em; }
-.brand-mark { width: 28px; height: 28px; display: grid; place-content: center; gap: 3px; border: 1px solid #245244; border-radius: 50%; transform: rotate(-8deg); }
-.brand-mark i { display: block; width: 12px; height: 2px; background: #245244; }.brand-mark i:nth-child(2) { width: 16px; background: #a44536; }.brand-mark i:nth-child(3) { width: 8px; margin-left: 4px; }
-.header-title { display: flex; align-items: baseline; gap: .7rem; color: #5c655e; font-size: .77rem; letter-spacing: .08em; }.header-title strong { color: #17221f; font-size: 1rem; }
-.account-area { display: flex; justify-content: flex-end; align-items: center; gap: 1rem; color: #4f5a51; font-size: .88rem; }.quiet-button, .text-link { color: #245244; background: transparent; border: 0; cursor: pointer; text-decoration: underline; text-underline-offset: .25rem; }
-.quality-main { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; padding: clamp(2rem, 5vw, 4.5rem) 0 4rem; }
-.intro-row { display: flex; justify-content: space-between; align-items: end; gap: 2rem; padding-bottom: 2.25rem; border-bottom: 2px solid #17221f; }.eyebrow { margin: 0 0 .7rem; color: #245244; font-size: .7rem; font-weight: 750; letter-spacing: .15em; }.intro-row h1 { max-width: 18ch; margin: 0; font-size: clamp(2.3rem, 5vw, 5rem); line-height: 1.06; letter-spacing: -.045em; }.intro-copy { max-width: 42rem; margin: 1rem 0 0; color: #5b655d; line-height: 1.7; }.intro-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .7rem; }
-.primary-button, .secondary-button { min-height: 44px; padding: .7rem 1rem; border: 1px solid #17221f; cursor: pointer; font-weight: 700; }.primary-button { color: #fffdf5; background: #17221f; }.primary-button:hover:not(:disabled) { background: #245244; border-color: #245244; }.secondary-button { color: #17221f; background: transparent; border-color: #9da59b; }.secondary-button:hover:not(:disabled) { border-color: #245244; color: #245244; }.primary-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .5; }
-.state-card { margin: 2rem 0; padding: 1.4rem; display: flex; align-items: center; gap: 1rem; border: 1px solid #c9c3b6; background: #fbfaf5; }.state-card p { margin: .35rem 0 0; color: #687169; }.state-symbol { width: 2rem; height: 2rem; display: grid; place-items: center; color: #fffdf5; background: #a44536; font-weight: 800; }.loading-state { color: #245244; }
-.run-summary { margin: 2rem 0 3rem; padding: 1.25rem 0 1.5rem; border-bottom: 1px solid #c9c3b6; }.section-label { display: flex; align-items: center; gap: .5rem; color: #687169; font-size: .78rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }.status-dot { width: .6rem; height: .6rem; border-radius: 50%; background: #245244; }.status-dot[data-status="failed"], .status-dot[data-status="error"] { background: #a44536; }.run-summary-main { display: flex; justify-content: space-between; align-items: end; gap: 2rem; margin-top: .9rem; }.run-summary h2 { margin: 0; font-size: clamp(1.8rem, 4vw, 3rem); }.run-summary p { margin: .45rem 0 0; color: #687169; }.trust-note { max-width: 25rem; padding-left: 1rem; border-left: 3px solid #a44536; }.trust-note strong, .trust-note span { display: block; }.trust-note strong { color: #245244; }.trust-note span { margin-top: .35rem; color: #687169; font-size: .8rem; overflow-wrap: anywhere; }
-.section-heading { margin-bottom: 1rem; }.section-heading h2 { margin: 0; font-size: 1.45rem; }.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: #c9c3b6; border: 1px solid #c9c3b6; }.metric-card { min-height: 130px; padding: 1.1rem; background: #fbfaf5; }.metric-card span, .metric-card small { display: block; color: #687169; }.metric-card strong { display: block; margin: .55rem 0 .35rem; font-size: clamp(1.6rem, 3vw, 2.4rem); letter-spacing: -.04em; }.metric-card small { font-size: .75rem; }
-.risk-section { margin-top: 3.5rem; }.risk-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }.risk-card { min-height: 112px; padding: 1rem; display: flex; justify-content: space-between; gap: 1rem; border-top: 2px solid #245244; background: #e9e5d9; }.risk-card span, .risk-card small { display: block; }.risk-card small { max-width: 12rem; margin-top: .45rem; color: #687169; font-size: .75rem; line-height: 1.4; }.risk-card strong { font-size: 2.3rem; }.risk-card strong[data-alert="true"] { color: #a44536; }.category-list { margin: 1.5rem 0 0; border-top: 1px solid #c9c3b6; }.category-list > div { display: flex; justify-content: space-between; gap: 1rem; padding: .85rem 0; border-bottom: 1px solid #ded9ce; }.category-list dt { font-weight: 700; }.category-list dd { display: flex; flex-wrap: wrap; gap: .85rem; margin: 0; color: #687169; font-size: .82rem; }
-.cases-section { margin-top: 3.5rem; }.cases-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; }.cases-panel { margin-top: 1rem; padding: 1rem; border: 1px solid #c9c3b6; background: #fbfaf5; }.filter-row { display: flex; flex-wrap: wrap; gap: .45rem; padding-bottom: 1rem; border-bottom: 1px solid #ded9ce; }.filter-button { padding: .45rem .7rem; color: #596259; background: transparent; border: 1px solid transparent; cursor: pointer; }.filter-button span { margin-left: .35rem; color: #245244; font-weight: 750; }.filter-button.active { color: #fffdf5; background: #245244; border-color: #245244; }.filter-button.active span { color: #fffdf5; }.case-list { display: grid; }.case-row { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #ded9ce; }.case-name { display: grid; grid-template-columns: auto 1fr; align-content: center; column-gap: .6rem; }.case-name strong { overflow-wrap: anywhere; }.case-name small { grid-column: 2; margin-top: .3rem; color: #687169; }.outcome-mark { width: .7rem; height: .7rem; margin-top: .25rem; border-radius: 50%; background: #245244; }.outcome-mark[data-outcome="failed"], .outcome-mark[data-outcome="error"] { background: #a44536; }.case-row dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin: 0; }.case-row dt { color: #687169; font-size: .72rem; }.case-row dd { margin: .3rem 0 0; color: #17221f; font-size: .85rem; overflow-wrap: anywhere; }.disclaimer { margin: 2rem 0 0; color: #687169; font-size: .8rem; line-height: 1.6; }
-@media (max-width: 900px) { .quality-header { grid-template-columns: 1fr auto; }.header-title { display: none; }.intro-row, .run-summary-main { align-items: start; flex-direction: column; }.intro-actions { justify-content: flex-start; }.metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .quality-header { padding: .8rem 1rem; }.account-area > span { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.quality-main { width: min(100% - 2rem, 1180px); padding-top: 2rem; }.intro-row h1 { font-size: clamp(2.3rem, 14vw, 3.8rem); }.intro-actions, .intro-actions button { width: 100%; }.metric-grid, .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-card { min-height: 112px; padding: .8rem; }.metric-card strong { font-size: 1.55rem; }.category-list > div { align-items: start; flex-direction: column; gap: .35rem; }.cases-heading { align-items: start; flex-direction: column; }.cases-heading .secondary-button { width: 100%; }.case-row { grid-template-columns: 1fr; gap: .8rem; }.case-row dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }.state-card { align-items: start; flex-wrap: wrap; }.state-card .text-link { margin-left: 3rem; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
-.round17c-picker { margin-top: 3rem; padding: 1.25rem; display: flex; justify-content: space-between; gap: 1.5rem; border: 1px solid #c9c3b6; background: linear-gradient(125deg, #e9e5d9, #f6f1e6); }.round17c-picker h2 { margin: 0; }.round17c-picker p:not(.eyebrow) { margin: .45rem 0 0; color: #687169; }.round17c-picker label { min-width: 18rem; color: #687169; font-size: .8rem; }.round17c-picker select { display: block; width: 100%; margin-top: .4rem; padding: .65rem; color: #17221f; background: #fbfaf5; border: 1px solid #9da59b; }.round17c-report { margin-top: 2rem; }.round17c-statuses { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }.round17c-statuses span { padding: .4rem .6rem; border: 1px solid #9da59b; color: #245244; background: #fbfaf5; font-size: .8rem; }.round17c-inconclusive { margin: 0 0 1rem; padding: .8rem 1rem; color: #8b2f25; background: #f0dfd8; border-left: 4px solid #a44536; font-weight: 700; }.ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }.ab-card { padding: 1.2rem; border: 1px solid #c9c3b6; background: #fbfaf5; }.ab-card h3 { margin: 0; }.ab-card h4 { margin: 1.15rem 0 .35rem; color: #245244; font-size: .8rem; }.ab-card p { margin: 0; color: #4f5a51; line-height: 1.65; white-space: pre-wrap; }.arm-meta, .trajectory { margin-top: .45rem !important; color: #687169 !important; font-size: .8rem; }.arm-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: 1rem 0 0; padding-top: .8rem; border-top: 1px solid #ded9ce; }.arm-facts dt { color: #687169; font-size: .72rem; }.arm-facts dd { margin: .2rem 0 0; font-size: .82rem; }.dimension-list { margin-top: 1rem; display: grid; gap: .35rem; }.dimension-list div { display: flex; justify-content: space-between; gap: .75rem; padding-top: .35rem; border-top: 1px solid #eee9de; font-size: .8rem; }.dimension-list strong { color: #245244; }
-@media (max-width: 560px) { .round17c-picker { flex-direction: column; }.round17c-picker label { min-width: 0; }.ab-grid { grid-template-columns: 1fr; } }
+:root{font-family:"Noto Serif CJK SC","Songti SC",serif;color:#182720;background:#f3eee1}*{box-sizing:border-box}body{margin:0}.report-page{min-height:100vh;padding-bottom:5rem;background:radial-gradient(circle at 85% 0,#dbe4d2 0,transparent 27rem),#f3eee1}header{height:70px;border-bottom:1px solid #a9aa93;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 6vw;font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;font-size:.85rem;letter-spacing:.06em}header a{color:#182720;font-weight:800;text-decoration:none}header button{justify-self:end;border:0;border-bottom:1px solid #274c3b;padding:.25rem 0;background:transparent;color:#274c3b;cursor:pointer}.hero,.selector,.report,.state{width:min(1120px,calc(100% - 2rem));margin:auto}.hero{padding:5.5rem 0 3rem;border-bottom:2px solid #182720}.hero p,.selector>div>p,.run-title p,.columns article>p{margin:0;color:#365f4a;font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;font-size:.74rem;font-weight:800;letter-spacing:.16em}.hero h1{max-width:9ch;margin:.65rem 0 1rem;font-size:clamp(3rem,7vw,6.5rem);line-height:.95;letter-spacing:-.07em}.hero>p:last-child{max-width:42rem;color:#526357;line-height:1.8;letter-spacing:0;font-size:1rem;font-weight:400}.selector{display:flex;justify-content:space-between;gap:2rem;padding:2rem 0;border-bottom:1px solid #c5c2aa}.selector h2{margin:.45rem 0 0}.selector label{min-width:20rem;font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;font-size:.8rem;color:#526357}.selector select{width:100%;margin-top:.4rem;padding:.7rem;background:#fffdf6;border:1px solid #989b85}.state{margin-top:2rem;padding:1.1rem 1.3rem;border-left:4px solid #365f4a;background:#fffdf6}.state.error{border-color:#a53a2b;color:#76291f}.report{padding-top:2rem}.status{display:flex;gap:.5rem;flex-wrap:wrap}.status span{padding:.35rem .6rem;border:1px solid #a9aa93;background:#fffdf6;font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;font-size:.78rem}.run-title{display:flex;justify-content:space-between;gap:1rem;align-items:end;margin:2rem 0 1rem}.run-title h2{margin:.5rem 0 0;font-size:clamp(1.5rem,3vw,2.5rem);overflow-wrap:anywhere}.run-title button{padding:.6rem 1rem;border:1px solid #182720;background:#182720;color:#fffdf6;cursor:pointer}.facts,.columns,.details{display:grid;gap:1px;background:#a9aa93;border:1px solid #a9aa93}.facts{grid-template-columns:repeat(4,1fr)}.facts div,.columns article,.details article{padding:1.1rem;background:#fffdf6}.facts dt{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;color:#526357;font-size:.75rem}.facts dd{margin:.4rem 0 0;font-size:1rem;overflow-wrap:anywhere}.columns{grid-template-columns:1fr 1fr;margin-top:2rem}.columns h3,.details h3{margin:.45rem 0 .65rem;font-size:1.25rem}.columns p:not(:first-child),.details p,.details li{margin:0;color:#3f5044;line-height:1.8;white-space:pre-wrap}.details{grid-template-columns:repeat(3,1fr);margin-top:1px}.details ul{padding-left:1.2rem;margin:.3rem 0}.details small{color:#6b796d}@media(max-width:760px){header{grid-template-columns:1fr auto}header span{display:none}.selector,.run-title{align-items:start;flex-direction:column}.selector label{min-width:0;width:100%}.facts,.columns,.details{grid-template-columns:1fr}.hero{padding-top:3.5rem}}
 </style>

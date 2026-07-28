@@ -138,7 +138,14 @@ def seal_run(run_dir: Path, required_files: list[str] | None = None, *, seal_nam
 
 def freeze_evidence(brief: dict[str, Any], rag: CulturalRagService | None = None) -> dict[str, Any]:
     service = rag or CulturalRagService(str(Path(__file__).resolve().parents[1] / "rag" / "corpus" / "met_open_access"))
-    request = brief if "brief" in brief else {"brief_version": BRIEF_PAYLOAD["brief_version"], "brief": brief}
+    if "brief" in brief:
+        request = brief
+    elif brief.get("brief_version") and "product_type" in brief:
+        # API validation already returns the normalized inner Brief.  Do not
+        # nest its version field inside ``brief`` a second time.
+        request = {"brief_version": brief["brief_version"], "brief": {key: value for key, value in brief.items() if key != "brief_version"}}
+    else:
+        request = {"brief_version": BRIEF_PAYLOAD["brief_version"], "brief": brief}
     normalized = validate_cultural_product_request(request)
     decision = service.decide_query(service.query_for_brief(normalized), 3)
     return {

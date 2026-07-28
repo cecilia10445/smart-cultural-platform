@@ -1,5 +1,16 @@
 # Round 17C worktree convergence
 
-The clean worktree is the sole source for the experimental Round 17C commit. The original worktree remains preserved as historical evidence and must not be reset, cleaned, or deleted in this round.
+`/home/lily/桌面/smart-cultural-platform` is the formal integration directory.
+It was rebuilt from `origin/main` and the audited experimental commit was
+cherry-picked before this business integration branch was created.
 
-After this branch has been reviewed, choose one formal development directory, verify its remote commit, then archive the other worktree only through a separate, user-approved operation. Do not use `git clean` or destructive resets to converge worktrees.
+The earlier uncommitted Reasonix state was exported to a SHA-256 verified,
+credential-free backup under
+`/mnt/hgfs/share/smart-cultural-platform-old-workspace-backup/` before its
+tracked source changes were precisely cleared. `.env`, virtual environments,
+installed dependencies and historical artifacts were not deleted.
+
+Keep both directories until the integration branch is reviewed and merged.
+Archive or remove the remaining non-formal worktree only through a separate,
+user-approved operation; never use `git clean` or destructive resets for that
+convergence.

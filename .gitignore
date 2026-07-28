@@ -13,6 +13,9 @@ evaluation/promptfoo/node_modules/
 # Round 17C controlled-run evidence and local Promptfoo state are never source.
 evaluation/promptfoo/evaluation/
 evaluation/promptfoo/.promptfoo*/
+evaluation/promptfoo/artifacts/
+evaluation/promptfoo/tmp-home/
+evaluation/promptfoo/*.db
 tmp-home/
 *.webm
 playwright-demo-output/

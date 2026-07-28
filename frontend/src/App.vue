@@ -104,7 +104,19 @@
               <p class="section-index">本次创作</p>
               <h2 id="result-title">生成结果</h2>
             </div>
-            <div class="result-grid">
+            <article v-if="result.experimental_text_skill" class="text-skill-result" data-testid="text-skill-result">
+              <p class="section-index">实验性文本 Skill 生成 · 不调用图片模型</p>
+              <h3>真实业务文本结果</h3>
+              <section class="content-copy"><h4>产品文案</h4><p>{{ result.product_copy }}</p></section>
+              <section class="content-copy"><h4>文字版设计说明</h4><p>{{ result.image_design_spec }}</p></section>
+              <aside class="evidence-register" aria-labelledby="text-skill-evidence-title">
+                <div class="evidence-heading"><p>RAG 来源</p><span>已冻结证据</span></div>
+                <h4 id="text-skill-evidence-title">本次实际使用的来源</h4>
+                <ul><li v-for="source in result.sources" :key="source.source_id"><a :href="source.source_url" target="_blank" rel="noopener noreferrer"><span>{{ source.title }}</span><small>{{ source.source_id }}</small></a></li></ul>
+              </aside>
+              <dl class="result-meta"><div><dt>生成耗时</dt><dd>{{ result.generation_time }} 秒</dd></div><div><dt>业务运行</dt><dd>{{ result.run_id }}</dd></div><div><dt>已加载文本 Skill</dt><dd>{{ result.selected_skill_id }}</dd></div></dl>
+            </article>
+            <div v-else class="result-grid">
               <div class="image-stage">
                 <img v-if="!imageFailed" :src="result.image_url" :alt="result.product_name" @error="imageFailed = true">
                 <div v-else class="image-unavailable" role="status">
@@ -396,6 +408,12 @@ export default {
       this.ratingError = ''
     },
     validGeneration(body) {
+      if (body?.status === 'success' && body.experimental_text_skill === true) {
+        return typeof body.product_copy === 'string' && body.product_copy
+          && typeof body.image_design_spec === 'string' && body.image_design_spec
+          && Array.isArray(body.sources) && body.sources.length > 0
+          && typeof body.run_id === 'string' && body.run_id
+      }
       const citations = body?.factual_background?.citations
       const validCitation = (source) => source
         && typeof source.source_id === 'string' && source.source_id
@@ -452,7 +470,7 @@ export default {
       this.ratingError = ''
 
       try {
-        const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, { headers })
+        const response = await axios.post('/api/v2/cultural-products/generate-with-text-skill', this.culturalBrief, { headers })
         if (!this.validGeneration(response.data)) {
           this.error = '生成结果不完整，请稍后重试。'
           return
