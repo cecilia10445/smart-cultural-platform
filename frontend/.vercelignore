@@ -1,0 +1,25 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.vercel/
+
+# Dependencies, build output, and caches
+node_modules/
+dist/
+.vite/
+
+# Tests and local Playwright evidence
+tests/
+test-results/
+playwright-report/
+user-image-demo-report/
+user-image-demo-videos/
+demo-test-report/
+*.zip
+*.trace
+
+# Local-only evaluation and runtime state
+.promptfoo*/
+tmp-home/
+*.log

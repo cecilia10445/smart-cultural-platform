@@ -25,6 +25,15 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
+    // The local Vite server exposes all three entry pages. Keep the same
+    // static entry points in a Vercel build without adding any API rewrite.
+    rollupOptions: {
+      input: {
+        index: resolve(__dirname, 'index.html'),
+        login: resolve(__dirname, 'login.html'),
+        dashboard: resolve(__dirname, 'dashboard.html')
+      }
+    }
   }
 })
