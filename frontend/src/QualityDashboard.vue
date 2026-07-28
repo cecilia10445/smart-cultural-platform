@@ -35,7 +35,20 @@
       </div>
       <div v-else-if="loading" class="state-card loading-state" aria-live="polite">正在读取最近一次离线评测。</div>
 
-      <template v-else-if="report">
+      <section class="round17c-picker" aria-labelledby="round17c-title">
+        <div><p class="eyebrow">ROUND 17C · TEXT-ONLY A/B</p><h2 id="round17c-title">受控文本评测记录</h2><p>文本交付、工具轨迹与评测完整性分开呈现；图片与数据库调用必须为 0。</p></div>
+        <label>选择历史运行<select v-model="selectedRunId" :disabled="round17cLoading || !round17cRuns.length" @change="loadRound17cReport"><option value="">暂无可用运行</option><option v-for="run in round17cRuns" :key="run.run_id" :value="run.run_id">{{ formatDate(run.started_at) }} · {{ run.run_id }}</option></select></label>
+      </section>
+      <div v-if="round17cError" class="state-card unavailable" role="status">{{ round17cError }}</div>
+      <section v-if="round17cReport" class="round17c-report" aria-labelledby="round17c-report-title">
+        <div class="section-heading"><p class="eyebrow">SEALED ARTIFACT · TEXT ONLY</p><h2 id="round17c-report-title">A/B 交付与审计状态</h2></div>
+        <div class="round17c-statuses"><span>技术：{{ round17cReport.technical_status }}</span><span>评测：{{ round17cReport.evaluation_validity }}</span><span>完整性：{{ round17cReport.integrity_status }}</span></div>
+        <p v-if="round17cReport.evaluation_validity !== 'comparable'" class="round17c-inconclusive">本次比较不可下定论；不显示赢家。</p>
+        <div v-if="round17cReport.arms?.baseline && round17cReport.arms?.skill_guided" class="ab-grid"><article v-for="arm in armOrder" :key="arm" class="ab-card"><h3>{{ arm === 'baseline' ? 'A · Baseline' : 'B · Skill-guided' }}</h3><p class="arm-meta">{{ armLabel(arm) }}</p><h4>产品文案</h4><p>{{ round17cReport.arms[arm].product_copy }}</p><h4>文字版设计说明</h4><p>{{ round17cReport.arms[arm].image_design_spec }}</p><dl class="arm-facts"><div><dt>延迟</dt><dd>{{ formatLatency(round17cReport.arms[arm].latency_ms) }}</dd></div><div><dt>请求</dt><dd>{{ round17cReport.arms[arm].requests ?? '未记录' }}</dd></div><div><dt>来源</dt><dd>{{ round17cReport.arms[arm].used_source_ids.length }}</dd></div></dl><div v-if="dimensionEntries(round17cReport.arms[arm]).length" class="dimension-list"><div v-for="[name, score] in dimensionEntries(round17cReport.arms[arm])" :key="name"><span>{{ dimensionLabel(name) }}</span><strong>{{ formatFivePoint(score) }}</strong></div></div><p v-if="arm === 'skill_guided'" class="trajectory">文本 Skill 轨迹：{{ round17cReport.arms[arm].tool_trajectory.length }} 个已记录步骤</p></article></div>
+        <p v-else class="round17c-inconclusive">该运行尚未产生可比较的双臂最终交付。</p>
+      </section>
+
+      <template v-if="report">
         <section class="run-summary" aria-labelledby="run-title">
           <div class="section-label"><span class="status-dot" :data-status="report.run_status"></span><span>最近一次评测</span></div>
           <div class="run-summary-main">
@@ -83,6 +96,12 @@ const qualityError = ref('')
 const userName = ref('运营管理员')
 const showCases = ref(false)
 const activeFilter = ref('all')
+const round17cRuns = ref([])
+const selectedRunId = ref('')
+const round17cReport = ref(null)
+const round17cError = ref('')
+const round17cLoading = ref(false)
+const armOrder = ['baseline', 'skill_guided']
 
 const metrics = [
   { key: 'total', label: '总用例', note: '当前回归范围' },
@@ -140,6 +159,40 @@ const loadReport = async () => {
   finally { loading.value = false }
 }
 
+const validArm = (value) => value && typeof value.product_copy === 'string' && typeof value.image_design_spec === 'string' && Array.isArray(value.used_source_ids) && !value.product_copy.trim().startsWith('{') && !value.image_design_spec.trim().startsWith('{')
+const normalizedRound17c = (value) => {
+  const data = value?.data
+  if (value?.status !== 'success' || !data || !['not_run', 'blocked', 'completed', 'failed'].includes(data.technical_status) || !['not_run', 'comparable', 'evaluation_inconclusive', 'judge_parse_error', 'judge_inconsistent', 'inconclusive_position_bias'].includes(data.evaluation_validity) || !['verified', 'failed'].includes(data.integrity_status)) return null
+  if (data.technical_status === 'completed' && (!validArm(data.arms?.baseline) || !validArm(data.arms?.skill_guided))) return null
+  return data
+}
+
+const loadRound17cReport = async () => {
+  if (!selectedRunId.value) { round17cReport.value = null; return }
+  round17cLoading.value = true; round17cError.value = ''
+  try {
+    const response = await fetch(`/api/dashboard/quality-reports/${encodeURIComponent(selectedRunId.value)}`, { headers: { Authorization: `Bearer ${token()}` } })
+    const body = await response.json().catch(() => ({}))
+    if (response.status === 401) { round17cError.value = '登录状态已失效，请重新登录。'; return }
+    if (response.status === 503) { round17cError.value = '该次 Round 17C 报告不可用或未通过完整性校验。'; return }
+    const safe = normalizedRound17c(body)
+    if (!safe) { round17cError.value = 'Round 17C 报告格式不可信，已拒绝展示。'; return }
+    round17cReport.value = safe
+  } catch { round17cError.value = 'Round 17C 报告加载失败。' }
+  finally { round17cLoading.value = false }
+}
+
+const loadRound17cRuns = async () => {
+  try {
+    const response = await fetch('/api/dashboard/quality-reports', { headers: { Authorization: `Bearer ${token()}` } })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || body.status !== 'success' || !Array.isArray(body.data?.runs)) return
+    round17cRuns.value = body.data.runs
+    selectedRunId.value = body.data.latest_run_id || ''
+    await loadRound17cReport()
+  } catch { round17cError.value = 'Round 17C 历史报告暂不可用。' }
+}
+
 const downloadReport = async () => {
   if (!token() || downloading.value) return
   downloading.value = true
@@ -169,6 +222,11 @@ const assertionLabel = (name) => ({ security_boundary: '安全边界断言', jso
 const statusLabel = (status) => ({ passed: '评测通过', failed: '存在失败用例', error: '评测执行异常' }[status] || '状态未知')
 const displayMetric = (key) => key === 'attack_success_rate' ? `${Math.round(Number(report.value[key] || 0) * 100)}%` : report.value[key]
 const formatDate = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间不可用' : date.toLocaleString('zh-CN') }
+const formatLatency = (value) => typeof value === 'number' ? `${value.toFixed(0)} ms` : '未记录'
+const formatFivePoint = (value) => typeof value?.score === 'number' ? `${value.score.toFixed(1)} / 5` : '未评分'
+const dimensionEntries = (arm) => Object.entries(arm.dimensions || {})
+const dimensionLabel = (value) => ({ professional_readability: '专业与可读性', product_title_recognition: '标题辨识度', brief_fit: 'Brief 贴合', cultural_specificity: '文化具体性', design_executability: '设计可执行性', factual_fidelity: '事实忠实', delivery_format: '交付格式', conciseness_non_repetition: '简洁无重复' }[value] || value)
+const armLabel = (arm) => arm === 'baseline' ? '无 Skill、无工具的共同最终生成器' : '仅文本 Skill 的规划器 + 共同最终生成器'
 const logout = () => { localStorage.removeItem('adminToken'); localStorage.removeItem('adminUser'); localStorage.removeItem('token'); localStorage.removeItem('userInfo'); window.location.href = '/login.html' }
 
 onMounted(() => {
@@ -177,6 +235,7 @@ onMounted(() => {
     try { const parsed = JSON.parse(storedUser); if (parsed.role === 'admin') userName.value = parsed.name || parsed.username || userName.value } catch { /* ignore malformed local identity */ }
   }
   loadReport()
+  loadRound17cRuns()
 })
 </script>
 
@@ -204,4 +263,6 @@ button:focus-visible, a:focus-visible { outline: 3px solid #a44536; outline-offs
 @media (max-width: 900px) { .quality-header { grid-template-columns: 1fr auto; }.header-title { display: none; }.intro-row, .run-summary-main { align-items: start; flex-direction: column; }.intro-actions { justify-content: flex-start; }.metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .quality-header { padding: .8rem 1rem; }.account-area > span { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.quality-main { width: min(100% - 2rem, 1180px); padding-top: 2rem; }.intro-row h1 { font-size: clamp(2.3rem, 14vw, 3.8rem); }.intro-actions, .intro-actions button { width: 100%; }.metric-grid, .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-card { min-height: 112px; padding: .8rem; }.metric-card strong { font-size: 1.55rem; }.category-list > div { align-items: start; flex-direction: column; gap: .35rem; }.cases-heading { align-items: start; flex-direction: column; }.cases-heading .secondary-button { width: 100%; }.case-row { grid-template-columns: 1fr; gap: .8rem; }.case-row dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }.state-card { align-items: start; flex-wrap: wrap; }.state-card .text-link { margin-left: 3rem; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+.round17c-picker { margin-top: 3rem; padding: 1.25rem; display: flex; justify-content: space-between; gap: 1.5rem; border: 1px solid #c9c3b6; background: linear-gradient(125deg, #e9e5d9, #f6f1e6); }.round17c-picker h2 { margin: 0; }.round17c-picker p:not(.eyebrow) { margin: .45rem 0 0; color: #687169; }.round17c-picker label { min-width: 18rem; color: #687169; font-size: .8rem; }.round17c-picker select { display: block; width: 100%; margin-top: .4rem; padding: .65rem; color: #17221f; background: #fbfaf5; border: 1px solid #9da59b; }.round17c-report { margin-top: 2rem; }.round17c-statuses { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }.round17c-statuses span { padding: .4rem .6rem; border: 1px solid #9da59b; color: #245244; background: #fbfaf5; font-size: .8rem; }.round17c-inconclusive { margin: 0 0 1rem; padding: .8rem 1rem; color: #8b2f25; background: #f0dfd8; border-left: 4px solid #a44536; font-weight: 700; }.ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }.ab-card { padding: 1.2rem; border: 1px solid #c9c3b6; background: #fbfaf5; }.ab-card h3 { margin: 0; }.ab-card h4 { margin: 1.15rem 0 .35rem; color: #245244; font-size: .8rem; }.ab-card p { margin: 0; color: #4f5a51; line-height: 1.65; white-space: pre-wrap; }.arm-meta, .trajectory { margin-top: .45rem !important; color: #687169 !important; font-size: .8rem; }.arm-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: 1rem 0 0; padding-top: .8rem; border-top: 1px solid #ded9ce; }.arm-facts dt { color: #687169; font-size: .72rem; }.arm-facts dd { margin: .2rem 0 0; font-size: .82rem; }.dimension-list { margin-top: 1rem; display: grid; gap: .35rem; }.dimension-list div { display: flex; justify-content: space-between; gap: .75rem; padding-top: .35rem; border-top: 1px solid #eee9de; font-size: .8rem; }.dimension-list strong { color: #245244; }
+@media (max-width: 560px) { .round17c-picker { flex-direction: column; }.round17c-picker label { min-width: 0; }.ab-grid { grid-template-columns: 1fr; } }
 </style>

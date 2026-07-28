@@ -1,0 +1,20 @@
+description: Round 17C four independent deterministic Judge jobs; no network.
+providers:
+  - id: file://round17c_fake_judge_provider.py
+    label: individual-baseline
+    config: { job: individual-baseline }
+  - id: file://round17c_fake_judge_provider.py
+    label: individual-guided
+    config: { job: individual-guided }
+  - id: file://round17c_fake_judge_provider.py
+    label: pairwise-ab
+    config: { job: pairwise-ab }
+  - id: file://round17c_fake_judge_provider.py
+    label: pairwise-ba
+    config: { job: pairwise-ba }
+prompts:
+  - "Round17C deterministic Judge job; return its strict JSON result."
+tests:
+  - description: exactly-four-jobs
+    assert:
+      - type: is-json

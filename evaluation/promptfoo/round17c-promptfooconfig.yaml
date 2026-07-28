@@ -1,0 +1,19 @@
+description: Round 17C text-only individual rubrics; real eval requires explicit environment configuration.
+providers:
+  - id: file://round17c_provider.py
+    label: opaque-candidate-baseline
+    config: { arm: baseline }
+  - id: file://round17c_provider.py
+    label: opaque-candidate-guided
+    config: { arm: skill_guided }
+prompts:
+  - "{{output}}"
+tests:
+  - description: individual-rubric
+    assert:
+      - type: llm-rubric
+        provider: deepseek:deepseek-v4-pro
+        value: |-
+          只评价候选的 product_copy 与 image_design_spec 文本。返回 JSON，含八个 0-5 分维度和 final_reason。
+          维度必须覆盖：专业可读性、产品标题辨识、Brief贴合、文化具体性、设计可执行性、事实忠实、交付格式、简洁无重复。
+          JSON/花括号/字段壳、source ID、内部分析、事实越界、空字段和不可交付内容必须明显扣分。不得评价图片，不得猜测候选身份。

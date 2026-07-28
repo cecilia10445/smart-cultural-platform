@@ -1,0 +1,21 @@
+description: Exactly four Round 17C DeepSeek JSON Judge jobs; no LLM assertions.
+providers:
+  - id: file://round17c_deepseek_provider.py
+    label: individual-baseline
+    config: { job: individual-baseline, model: deepseek-v4-pro, base_url: "${ROUND17C_DEEPSEEK_BASE_URL}", trust_env: "${ROUND17C_DEEPSEEK_TRUST_ENV}" }
+  - id: file://round17c_deepseek_provider.py
+    label: individual-guided
+    config: { job: individual-guided, model: deepseek-v4-pro, base_url: "${ROUND17C_DEEPSEEK_BASE_URL}", trust_env: "${ROUND17C_DEEPSEEK_TRUST_ENV}" }
+  - id: file://round17c_deepseek_provider.py
+    label: pairwise-ab
+    config: { job: pairwise-ab, model: deepseek-v4-pro, base_url: "${ROUND17C_DEEPSEEK_BASE_URL}", trust_env: "${ROUND17C_DEEPSEEK_TRUST_ENV}" }
+  - id: file://round17c_deepseek_provider.py
+    label: pairwise-ba
+    config: { job: pairwise-ba, model: deepseek-v4-pro, base_url: "${ROUND17C_DEEPSEEK_BASE_URL}", trust_env: "${ROUND17C_DEEPSEEK_TRUST_ENV}" }
+prompts:
+  - "{{judge_prompt}}"
+tests:
+  - description: direct-json-target-only
+    vars: { judge_prompt: "Runtime injects one anonymous strict JSON Judge prompt per job." }
+    assert:
+      - type: is-json

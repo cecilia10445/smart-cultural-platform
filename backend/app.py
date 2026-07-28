@@ -32,6 +32,7 @@ frontend_dir = os.path.join(project_root, "frontend")
 REAL_BUSINESS_SMOKE_DATABASE = "aigc_platform_demo"
 PROMPTFOO_LATEST_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.json"
 PROMPTFOO_LATEST_HTML_PATH = Path(project_root) / "evaluation" / "artifacts" / "latest.html"
+ROUND17C_REPORT_ROOT = Path(project_root) / "evaluation" / "artifacts" / "round-17c-clean"
 
 print(f"📁 项目根目录: {project_root}")
 print(f"📁 前端目录: {frontend_dir}")
@@ -39,7 +40,7 @@ print(f"📁 前端目录: {frontend_dir}")
 # 用户数据加载函数
 def load_users_data():
     """加载用户数据"""
-    users_file = os.path.join(backend_dir, "data", "test_users.json")
+    users_file = os.environ.get("TEST_USERS_DATA_PATH") or os.path.join(backend_dir, "data", "test_users.json")
     
     if os.path.exists(users_file):
         with open(users_file, 'r', encoding='utf-8') as f:
@@ -67,7 +68,7 @@ def load_users_data():
 
 def save_users_data(data):
     """Atomically persist user data so password migration cannot leave partial JSON."""
-    users_file = os.path.join(backend_dir, "data", "test_users.json")
+    users_file = os.environ.get("TEST_USERS_DATA_PATH") or os.path.join(backend_dir, "data", "test_users.json")
     directory = os.path.dirname(users_file)
     fd, temporary_path = tempfile.mkstemp(dir=directory, prefix="test_users.", suffix=".tmp")
     try:
@@ -876,6 +877,35 @@ def download_quality_report_html():
                          download_name='promptfoo-security-report.html', max_age=0)
     except (OSError, ValueError):
         return api_error("QUALITY_REPORT_UNAVAILABLE", "Quality report is unavailable.", 503, True, True)
+
+
+@app.route('/api/dashboard/quality-reports', methods=['GET'])
+def list_round17c_quality_reports():
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing quality reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        from backend.round17c_reports import list_runs
+        runs = list_runs(ROUND17C_REPORT_ROOT)
+        return jsonify({'status': 'success', 'data': {'runs': runs, 'latest_run_id': runs[0]['run_id'] if runs else None}})
+    except (OSError, UnicodeError, ValueError):
+        return api_error("QUALITY_REPORT_UNAVAILABLE", "Round 17C reports are unavailable.", 503, True, True)
+
+
+@app.route('/api/dashboard/quality-reports/<run_id>', methods=['GET'])
+def get_round17c_quality_report(run_id):
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing quality reports.", 401)
+    if user_info.get('role') != 'admin':
+        return api_error("ADMIN_REQUIRED", "Administrator access is required.", 403)
+    try:
+        from backend.round17c_reports import ReportUnavailable, public_run
+        return jsonify({'status': 'success', 'data': public_run(ROUND17C_REPORT_ROOT, run_id)})
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return api_error("QUALITY_REPORT_UNAVAILABLE", "Round 17C report is unavailable.", 503, True, True)
 
 # 运营数据接口（需要管理员权限）
 @app.route('/api/dashboard/stats', methods=['GET'])

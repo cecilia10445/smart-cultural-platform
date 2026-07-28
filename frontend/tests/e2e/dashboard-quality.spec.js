@@ -18,6 +18,22 @@ const report = {
   },
 }
 
+const finalArm = (suffix) => ({
+  product_copy: `清韵折叠阅读灯${suffix}以竹木和半透明纸质扩散罩营造稳定柔和的阅读光线，适合书房和旅行阅读。`,
+  image_design_spec: `展开状态的折叠阅读灯${suffix}置于米白纸面，突出竹木纹理、透光纸罩与清晰可辨的收纳结构。`,
+  used_source_ids: ['fixture-source'], latency_ms: 1200, requests: 1, tool_trajectory: [],
+  dimensions: { professional_readability: { score: 4.2 }, delivery_format: { score: 4.0 } },
+})
+const roundRuns = [
+  { run_id: 'round-17c-clean-20260728T010101Z-27e36a2', started_at: '2026-07-28T01:01:01Z', technical_status: 'completed', evaluation_validity: 'comparable', integrity_status: 'verified' },
+  { run_id: 'round-17c-clean-20260728T010102Z-27e36a2', started_at: '2026-07-28T01:01:02Z', technical_status: 'completed', evaluation_validity: 'inconclusive_position_bias', integrity_status: 'verified' },
+  { run_id: 'round-17c-clean-20260728T010103Z-27e36a2', started_at: '2026-07-28T01:01:03Z', technical_status: 'failed', evaluation_validity: 'not_run', integrity_status: 'failed' },
+  { run_id: 'round-17c-clean-20260728T010104Z-27e36a2', started_at: '2026-07-28T01:01:04Z', technical_status: 'blocked', evaluation_validity: 'not_run', integrity_status: 'verified' },
+]
+const roundReport = (run) => ({
+  status: 'success', data: { ...run, model: null, actual_calls: { qwen: 0, deepseek: 0, image: 0, database_writes: 0 }, arms: run.technical_status === 'completed' ? { baseline: finalArm('A'), skill_guided: { ...finalArm('B'), requests: 4, tool_trajectory: [{ tool: 'load_generation_skill' }] } } : {} },
+})
+
 async function openDashboard(page, context, mode = 'success') {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
@@ -26,17 +42,22 @@ async function openDashboard(page, context, mode = 'success') {
     localStorage.setItem('adminToken', 'playwright-admin-token')
     localStorage.setItem('adminUser', JSON.stringify({ username: 'admin1', role: 'admin', name: '运营管理员' }))
   })
-  await page.route('**/api/dashboard/quality-report', (route) => route.fulfill({
+  await page.route(/\/api\/dashboard\/quality-report$/, (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify(mode === 'success' ? report : { status: mode === 'unavailable' ? 'unavailable' : 'error', code: mode === 'unavailable' ? 'QUALITY_REPORT_UNAVAILABLE' : 'AUTH_REQUIRED' }),
   }))
-  await page.route('**/api/dashboard/quality-report/html', (route) => route.fulfill({
+  await page.route(/\/api\/dashboard\/quality-report\/html$/, (route) => route.fulfill({
     status: 200,
     contentType: 'text/html',
     headers: { 'Content-Disposition': 'attachment; filename=promptfoo-security-report.html' },
     body: '<html><body>offline report</body></html>',
   }))
+  await page.route(/\/api\/dashboard\/quality-reports$/, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'success', data: { runs: roundRuns, latest_run_id: roundRuns[0].run_id } }) }))
+  await page.route(/\/api\/dashboard\/quality-reports\/[^/]+$/, (route) => {
+    const run = roundRuns.find((item) => route.request().url().endsWith(item.run_id)) || roundRuns[0]
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(roundReport(run)) })
+  })
   await page.goto('/dashboard.html')
   await expect(page.getByRole('heading', { name: '把评测结果看清楚' })).toBeVisible()
   return errors
@@ -64,6 +85,21 @@ test('独立 AI 质量评测页面展示脱敏汇总、明细和下载入口', a
   expect((await downloadPromise).suggestedFilename()).toBe('promptfoo-security-report.html')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({ path: `test-results/dashboard-quality-${testInfo.project.name}.png`, fullPage: true })
+  expect(errors).toEqual([])
+})
+
+test('Round 17C 历史报告展示原量纲、状态和不可比较门禁', async ({ page, context }) => {
+  const errors = await openDashboard(page, context)
+  await expect(page.getByRole('heading', { name: 'A/B 交付与审计状态' })).toBeVisible()
+  await expect(page.getByText('4.2 / 5')).toHaveCount(2)
+  await expect(page.getByText('42.0 / 5')).toHaveCount(0)
+  await expect(page.getByText('"标题"')).toHaveCount(0)
+  await page.locator('.round17c-picker select').selectOption(roundRuns[1].run_id)
+  await expect(page.getByText('本次比较不可下定论；不显示赢家。')).toBeVisible()
+  await page.locator('.round17c-picker select').selectOption(roundRuns[2].run_id)
+  await expect(page.getByText('该运行尚未产生可比较的双臂最终交付。')).toBeVisible()
+  await page.locator('.round17c-picker select').selectOption(roundRuns[3].run_id)
+  await expect(page.getByText('技术：blocked')).toBeVisible()
   expect(errors).toEqual([])
 })
 
