@@ -15,41 +15,39 @@
 - **Observable Workflow**：工具轨迹、Skill ID/version/hash、RAG 来源、耗时、调用次数、失败阶段与稳定错误码进入 artifact 或业务日志。
 - **Business Persistence**：成功的生产图片生成写入 MySQL `generation_logs`；用户只能读取自己的历史和详情。
 
-## 两条模型能力路径
+## 统一业务架构
 
-项目把“文本 Skill Agent”和“生产图片生成”分开实现、分开审计。两条路径共享 Brief 校验、领域 RAG、来源边界、持久化和可观测性，但不混淆模型能力。
-
-### 文本 Skill Agent 路径（实验性业务文本与受控评测）
+平台的目标是把用户创作和运营追踪放在同一条可审计流水线上：先由文本 Agent 基于文化证据和文本 Skill 形成可交付的产品设计稿，再把设计稿交给视觉约束与图片模型，最终将业务结果、证据和轨迹统一写入历史与运营报告。
 
 ```mermaid
 flowchart TD
-    A[User Brief] --> B[Brief Validation]
-    B --> C[Domain RAG / Grounded Evidence]
-    C --> D[Pydantic AI Agent]
-    D --> E[Native Tool Call: load_generation_skill]
-    E --> F[Versioned Text Skill Registry]
-    F --> G[Structured Text Generation]
-    G --> H[Artifact / Database / History]
+    U[用户 / 运营人员] --> FE[Vue 业务与运营页面]
+    FE --> API[Flask API]
+    API --> BV[Brief Validation]
+    BV --> RAG[Domain RAG / Grounded Evidence]
+    RAG --> TA[Pydantic AI Text Agent]
+    TA --> TC[Versioned Text Skill Registry]
+    TC --> T1[Native Tool Call: load_generation_skill]
+    T1 --> PD[Structured Product Design Draft]
+    PD --> VM[Visual Skill Matching / Image Constraints]
+    VM --> IP[Image Prompt Composition]
+    IP --> WAN[WAN Image Model]
+    PD --> OUT[Structured Text Output]
+    OUT --> DB[MySQL / Artifact Manifest]
+    WAN --> DB
+    DB --> UH[User History / Detail Readback]
+    DB --> OR[Operational Report / Historical Selection]
 ```
 
-`POST /api/v2/cultural-products/generate-with-text-skill` 是独立的文本 Skill 实验入口。服务端冻结本地证据，Planner 仅看到 **text kind** catalog，并通过原生 `load_generation_skill` tool call 自主选择一个合法文本 Skill；最终生成器再使用同一 Brief、同一冻结 evidence 和同一最终 Schema 生成业务文本。
+这张图表达的是明确的目标编排：
 
-### 生产图片路径（当前普通用户业务入口）
+1. **Text Skill 阶段**：模型在 text kind catalog 中自主选择一个合法文本 Skill，原生 `load_generation_skill` 调用由服务端安全 loader 执行；Brief、Grounded Evidence 与 Skill Instructions 共同形成产品文案和文字版产品设计稿。
+2. **Visual / Image 阶段**：产品设计稿与文化 evidence、展示方式、材质和视觉约束组成图片 prompt；视觉 Skill 只在图片阶段用于匹配和约束视觉设计，再交由 WAN 图片模型生成产品图。
+3. **业务与运营阶段**：文本、图片、来源、Skill、工具轨迹、耗时、调用次数和数据库记录进入用户历史与运营报告，支持回溯和问题定位。
 
-```mermaid
-flowchart TD
-    A[User Brief] --> B[Production V2 Validation]
-    B --> C[Text / Cultural Context Preparation]
-    C --> D[Image Generation Workflow]
-    D --> E[Visual / Image Constraints]
-    E --> F[WAN Image Model]
-    F --> G[Database Persistence]
-    G --> H[User History / Detail View]
-```
+能力边界保持不变：文本 Agent 只暴露 text Skill；visual/image Skill 不作为文本 Agent 的工具；文字版设计说明是产品设计交付的一部分，不等同于视觉模型调用。
 
-`POST /api/v2/cultural-products/generate` 是当前普通用户的生产图片入口：它校验文化 Brief 与展示方式，准备文本与文化上下文，调用 Qwen 文本生成和 WAN 图片生成，并将成功结果持久化。版本化 Registry 中的 visual/image Skill 属于视觉设计约束和视觉路由边界；**文本 Skill Planner 不会看到、选择或加载 visual Skill**。当前生产 V2 图片流程使用经过校验的 `visual_direction`/展示要求构造图片工作流，不把文字版设计说明误称为视觉模型调用。
-
-两条路径的共同规则：文本路径只暴露文本 Skill；视觉模型 Skill 只属于视觉/图片边界；最终交付文本、工具内部信息和视觉生成职责彼此隔离。
+仓库已经分别具备文本 Skill Agent 的原生工具调用/安全 loader 证据，以及生产 V2 的 Qwen + WAN 图片生成和 MySQL 持久化证据。当前生产图片入口使用经过校验的 `visual_direction`、展示要求和文化上下文构造图片工作流；将产品设计稿与 visual Skill 匹配串成同一次生产调用，是该统一架构的下一步接线目标。
 
 ## Agent 能力与工具调用
 
@@ -62,10 +60,6 @@ flowchart TD
 - Pydantic 结构化输出与严格 Schema Validation；
 - 工具轨迹、阶段耗时、`RunUsage.requests`/实际调用计数记录；
 - 请求数、工具数、重复 Skill 和不合法来源的限制。
-
-简历友好的准确描述是：
-
-> 基于 Pydantic AI 编排受控 Agent Loop，由模型自主选择合法文本 Skill，通过原生 tool call 驱动安全 loader，并将工具轨迹、Skill 版本和输出结果纳入可审计 artifact。
 
 在 Round 17C 的真实文本业务证据中，Qwen 已产生原生 `load_generation_skill` 调用并实际加载文本 Skill；这证明的是工具调用与安全加载链路，不等同于“Skill 已被统计证明提升质量”。
 
