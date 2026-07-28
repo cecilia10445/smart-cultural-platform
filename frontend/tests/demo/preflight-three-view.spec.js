@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import { assertAllVisibleEditableFieldsFilled, fillThreeViewBrief } from './business-demo-data.js'
+import { payloadSha256 } from './payload-contract.js'
 
 const testUser = { user_id: 'preflight-user', username: 'preflight-user', name: '预演用户' }
 
@@ -36,4 +37,8 @@ test('三视图浏览器预演只捕获合法 payload，不发起生成请求', 
   const destination = process.env.DEMO_PREFLIGHT_PAYLOAD_PATH || testInfo.outputPath('three-view-payload.json')
   fs.mkdirSync(path.dirname(destination), { recursive: true })
   fs.writeFileSync(destination, `${JSON.stringify(captured, null, 2)}\n`, 'utf8')
+  if (process.env.DEMO_PREFLIGHT_MANIFEST_PATH) {
+    fs.mkdirSync(path.dirname(process.env.DEMO_PREFLIGHT_MANIFEST_PATH), { recursive: true })
+    fs.writeFileSync(process.env.DEMO_PREFLIGHT_MANIFEST_PATH, `${JSON.stringify({ payload_sha256: payloadSha256(captured), presentation_mode: captured.brief.presentation_mode }, null, 2)}\n`, 'utf8')
+  }
 })

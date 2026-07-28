@@ -1,30 +1,17 @@
 import { expect, test } from '@playwright/test'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { assertAllVisibleEditableFieldsFilled, fillThreeViewBrief } from './business-demo-data.js'
+import { payloadSha256 } from './payload-contract.js'
 
 const email = process.env.DEMO_EMAIL
 const password = process.env.DEMO_PASSWORD
-
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
-  return JSON.stringify(value)
-}
 
 test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page }, testInfo) => {
   test.skip(!email || !password, '需要通过 DEMO_EMAIL 和 DEMO_PASSWORD 提供运营账户。')
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') pageErrors.push(message.text()) })
-  if (process.env.DEMO_REPLAY_RESPONSE_PATH) {
-    const replay = JSON.parse(fs.readFileSync(process.env.DEMO_REPLAY_RESPONSE_PATH, 'utf8'))
-    await page.route('**/api/v2/cultural-products/generate-with-text-skill', route => route.fulfill({
-      status: 200, contentType: 'application/json', body: JSON.stringify(replay),
-    }))
-  }
-
   await page.goto('/login.html', { waitUntil: 'networkidle' })
   await expect(page.getByRole('heading', { name: '智能文创平台' })).toBeVisible()
   await page.waitForTimeout(1200)
@@ -43,21 +30,29 @@ test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page
   await fillThreeViewBrief(page)
   await expect(page.getByLabel('产品展示方式')).toHaveValue('three_view')
   await assertAllVisibleEditableFieldsFilled(page)
-  await page.waitForTimeout(1800)
+  await page.waitForTimeout(8000)
   const submitted = page.waitForRequest((request) => request.method() === 'POST'
     && new URL(request.url()).pathname === '/api/v2/cultural-products/generate-with-text-skill')
+  const completed = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/v2/cultural-products/generate-with-text-skill')
   await page.getByRole('button', { name: '生成文创产品' }).click()
   const submittedRequest = await submitted
   const submittedPayload = submittedRequest.postDataJSON()
-  const submittedSha = crypto.createHash('sha256').update(canonicalJson(submittedPayload)).digest('hex')
+  const submittedSha = payloadSha256(submittedPayload)
   if (process.env.DEMO_EXPECTED_PAYLOAD_SHA) expect(submittedSha).toBe(process.env.DEMO_EXPECTED_PAYLOAD_SHA)
   if (process.env.DEMO_FORMAL_PAYLOAD_PATH) {
     fs.mkdirSync(path.dirname(process.env.DEMO_FORMAL_PAYLOAD_PATH), { recursive: true })
     fs.writeFileSync(process.env.DEMO_FORMAL_PAYLOAD_PATH, `${JSON.stringify(submittedPayload, null, 2)}\n`, 'utf8')
   }
+  const generationResponse = await completed
+  expect(generationResponse.status()).toBe(200)
+  const generationBody = await generationResponse.json()
+  expect(generationBody.experimental_text_skill).toBe(true)
+  expect(generationBody.run_id).toMatch(/^round-17c-business-/)
+  expect(generationBody.business_record_id).toBeTruthy()
   await expect(page.getByTestId('text-skill-result')).toBeVisible({ timeout: 150_000 })
   await expect(page.getByRole('heading', { name: '真实业务文本结果' })).toBeVisible()
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(7000)
   const runId = await page.locator('.result-meta').getByText(/round-17c-business-/).textContent()
   expect(runId).toMatch(/^round-17c-business-/)
   const readback = await page.evaluate(async (id) => {
@@ -87,7 +82,7 @@ test('录制真实文本 Skill 业务生成与运营报告回看', async ({ page
   await expect(page.getByText(/Judge|DeepSeek|评分|赢家|位置偏差/)).toHaveCount(0)
   const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
   expect(pageOverflow).toBe(false)
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(7000)
   await page.screenshot({ path: testInfo.outputPath('business-report.png'), fullPage: true })
   expect(pageErrors).toEqual([])
 })
