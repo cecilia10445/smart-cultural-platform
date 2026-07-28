@@ -32,7 +32,7 @@ def public_business_run(root: Path, run_id: str) -> dict[str, Any]:
     if integrity!='verified' or manifest.get('technical_status')!='completed': return {**base,'report':None}
     report=_json(path/'normalized-report.json'); output=report.get('output')
     if not isinstance(output,dict) or not all(isinstance(output.get(k),str) and output[k] for k in ('product_copy','image_design_spec')): raise BusinessReportUnavailable('REPORT_UNAVAILABLE')
-    return {**base,'report':{k:report.get(k) for k in ('created_at','rag_status','source_ids','selected_skill_id','skill_version','skill_body_sha256','tool_trajectory','planner_latency_ms','final_latency_ms','actual_calls')},'output':{'product_copy':output['product_copy'],'image_design_spec':output['image_design_spec'],'used_source_ids':output.get('used_source_ids',[])}}
+    return {**base,'report':{k:report.get(k) for k in ('created_at','rag_status','source_ids','selected_skill_id','skill_version','skill_body_sha256','tool_trajectory','planner_latency_ms','final_latency_ms','actual_calls','business_record_id','database_transaction_status')},'output':{'product_copy':output['product_copy'],'image_design_spec':output['image_design_spec'],'used_source_ids':output.get('used_source_ids',[])}}
 
 def list_business_runs(root: Path) -> list[dict[str,Any]]:
     if not root.exists() or root.is_symlink(): return []

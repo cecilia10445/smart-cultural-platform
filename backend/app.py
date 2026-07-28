@@ -797,11 +797,26 @@ def generate_cultural_product_with_text_skill_api():
             model_name=settings.dashscope_text_model,
             base_url=settings.dashscope_openai_base_url,
             artifact_root=ROUND17C_BUSINESS_REPORT_ROOT,
+            persist_completed_generation=lambda report: mysql_service.persist_text_skill_generation(
+                user_id=user_info["user_id"], brief=brief, generation=report,
+            ),
         )
         result['request_id'] = current_request_id()
         return jsonify(result)
     except BusinessGenerationError as error:
         return api_error(error.code, "Experimental text generation could not be completed.", 502, False)
+
+
+@app.route('/api/v2/cultural-products/text-skill-generations/<run_id>', methods=['GET'])
+def get_cultural_product_text_skill_generation_api(run_id):
+    """Read back one persisted experimental text generation for its owner."""
+    user_info = authenticate_user()
+    if not user_info:
+        return api_error("AUTH_REQUIRED", "Please sign in before viewing generation records.", 401)
+    result = mysql_service.read_text_skill_generation(user_id=user_info["user_id"], run_id=run_id)
+    if result is None:
+        return api_error("TEXT_SKILL_GENERATION_NOT_FOUND", "The requested generation record is unavailable.", 404)
+    return jsonify({"status": "success", "data": result})
 
 # 运营质量报告接口（固定本地 Promptfoo 输出，禁止客户端传路径）
 @app.route('/api/dashboard/quality-report', methods=['GET'])

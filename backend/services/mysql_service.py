@@ -241,6 +241,93 @@ class MySQLService:
                 
         return None
 
+    def get_text_skill_generation_by_run_id(self, user_id: str, run_id: str):
+        """Return the one experimental text-Skill record for ``run_id``.
+
+        ``run_id`` deliberately remains inside the existing JSON audit payload:
+        this reuses the established ``generation_logs`` contract and does not
+        require a schema migration solely for an experimental workflow.
+        """
+        query = """
+            SELECT id AS log_id, user_id, title, content, generation_kind,
+                   response_json, `timestamp`
+            FROM generation_logs
+            WHERE user_id = %s
+              AND generation_kind = 'round17c_text_skill'
+              AND JSON_UNQUOTE(JSON_EXTRACT(response_json, '$.run_id')) = %s
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        rows = self.execute_query(query, (user_id, run_id), max_retries=0)
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def persist_text_skill_generation(self, *, user_id: str, brief: dict[str, Any], generation: dict[str, Any]):
+        """Persist one completed Round 17C text generation in ``generation_logs``.
+
+        The existing table is the online source of truth.  This method uses a
+        single parameterised INSERT with autocommit (the application's current
+        transaction boundary), after checking the existing run id for
+        idempotency.  No provider payload, credential, image placeholder or
+        Judge result is stored here.
+        """
+        run_id = generation.get("run_id")
+        if not isinstance(user_id, str) or not user_id or not isinstance(run_id, str) or not run_id:
+            return None
+        existing = self.get_text_skill_generation_by_run_id(user_id, run_id)
+        if existing:
+            return {"log_id": existing.get("log_id"), "database_writes": 0, "transaction_status": "already_committed"}
+
+        output = generation.get("output") if isinstance(generation.get("output"), dict) else {}
+        calls = generation.get("actual_calls") if isinstance(generation.get("actual_calls"), dict) else {}
+        source_ids = generation.get("source_ids") if isinstance(generation.get("source_ids"), list) else []
+        response_payload = {
+            "run_id": run_id, "rag_status": generation.get("rag_status"), "source_ids": source_ids,
+            "selected_skill_id": generation.get("selected_skill_id"), "skill_version": generation.get("skill_version"),
+            "skill_body_sha256": generation.get("skill_body_sha256"), "tool_call_name": "load_generation_skill",
+            "model_name": generation.get("model_name"), "actual_calls": {"qwen": calls.get("qwen", 0), "image": 0, "database_writes": 1},
+            "artifact_run_id": run_id,
+        }
+        product_copy = output.get("product_copy") if isinstance(output.get("product_copy"), str) else ""
+        design_spec = output.get("image_design_spec") if isinstance(output.get("image_design_spec"), str) else ""
+        response_payload["product_copy"] = product_copy
+        response_payload["image_design_spec"] = design_spec
+        content = f"{product_copy}\n\n{design_spec}".strip()
+        product_type = brief.get("product_type") if isinstance(brief.get("product_type"), str) else "文创产品"
+        source = brief.get("cultural_source") if isinstance(brief.get("cultural_source"), dict) else {}
+        source_name = source.get("name") if isinstance(source.get("name"), str) else ""
+        query = """
+            INSERT INTO generation_logs
+            (user_id, event_type, timestamp, prompt, style, image_url, title, content, generation_time,
+             content_length, user_rating, download_count, user_age, user_gender, login_time, data_origin,
+             generation_kind, prompt_template_version, brief_json, response_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        log_id = self.execute_insert(query, (
+            user_id, "generate", datetime.now().isoformat(), f"{product_type}：{source_name}", "text-skill", None,
+            product_type, content, generation.get("generation_time"), len(content), None, 0, None, None, None,
+            "production", "round17c_text_skill", "round17c-text-skill-v1", json.dumps(brief, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(response_payload, ensure_ascii=False, separators=(",", ":")),
+        ), max_retries=0)
+        if log_id is None:
+            return None
+        return {"log_id": int(log_id), "database_writes": 1, "transaction_status": "committed"}
+
+    def read_text_skill_generation(self, *, user_id: str, run_id: str):
+        """Return a small, allow-listed application DTO for one persisted run."""
+        row = self.get_text_skill_generation_by_run_id(user_id, run_id)
+        if not isinstance(row, dict):
+            return None
+        value = row.get("response_json")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError):
+                return None
+        if not isinstance(value, dict) or value.get("run_id") != run_id:
+            return None
+        fields = ("run_id", "rag_status", "source_ids", "selected_skill_id", "skill_version", "skill_body_sha256", "tool_call_name", "model_name", "actual_calls", "product_copy", "image_design_spec")
+        return {"log_id": row.get("log_id"), **{field: value.get(field) for field in fields}}
+
     def check_connection_health(self):
         """检查连接健康状态 - 现在总是返回True，因为每次查询都新建连接"""
         return True  # 由于每次查询都新建连接，健康检查不再必要

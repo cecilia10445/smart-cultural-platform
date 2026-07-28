@@ -18,9 +18,12 @@ evaluation/promptfoo/tmp-home/
 evaluation/promptfoo/*.db
 tmp-home/
 *.webm
+!docs/demo/
+!docs/demo/*.webm
 playwright-demo-output/
 frontend/test-results/
 frontend/playwright-report/
+frontend/demo-test-report/
 # Runtime images are persisted locally for controlled business smoke evidence;
 # they are data, never source assets.
 static/images/image_*.png

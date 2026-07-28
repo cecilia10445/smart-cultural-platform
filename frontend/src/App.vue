@@ -296,7 +296,7 @@ export default {
         form_and_material: '',
         use_case: '',
         target_audience: '',
-        presentation_mode: 'flat_front_back',
+        presentation_mode: 'single_hero',
       },
       dimensions: { ...DEFAULT_DIRECTION.dimensions },
       selectedDirectionId: DEFAULT_DIRECTION_ID,
@@ -394,7 +394,7 @@ export default {
     clearAll() {
       this.prompt = ''
       this.confirmedFactsText = ''
-      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '', presentation_mode: 'flat_front_back' }
+      this.brief = { product_type: '', cultural_source: { source_type: 'artifact', name: '', era: '', creator: '' }, form_and_material: '', use_case: '', target_audience: '', presentation_mode: 'single_hero' }
       this.dimensions = { ...DEFAULT_DIRECTION.dimensions }
       this.selectedDirectionId = DEFAULT_DIRECTION_ID
       this.supplement = ''

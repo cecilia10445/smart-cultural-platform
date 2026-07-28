@@ -39,6 +39,53 @@ def test_business_flow_uses_agent_result_and_seals_report(monkeypatch, tmp_path)
     assert (run / "sha256sums.json").exists()
 
 
+def test_business_flow_persists_only_after_final_output_and_records_actual_write(monkeypatch, tmp_path):
+    persisted = []
+    monkeypatch.setattr(business, "freeze_evidence", lambda _: FROZEN)
+    monkeypatch.setattr(business, "build_dashscope_client", lambda **_: object())
+    monkeypatch.setattr(business, "build_model", lambda **_: object())
+    deps = SimpleNamespace(loaded_skill_id="museum-product-explainer", loaded_skill_sha256="a" * 64, catalog_sha256="b" * 64, trajectory=[{"tool": "load_generation_skill", "skill_id": "museum-product-explainer"}])
+    monkeypatch.setattr(business, "run_guided_plan", lambda *args: (deps, {"skill_id": "museum-product-explainer"}, {"requests": 1, "latency_ms": 1}))
+    monkeypatch.setattr(business, "run_guided_final", lambda *args: (OUTPUT, {"requests": 1, "latency_ms": 1}))
+
+    def persist(report):
+        persisted.append(report)
+        assert report["output"] == OUTPUT.model_dump()
+        assert report["actual_calls"]["database_writes"] == 0
+        return {"log_id": 42, "database_writes": 1, "transaction_status": "committed"}
+
+    result = business.generate_with_text_skill(BRIEF, api_key="test-key", model_name="qwen", base_url="https://example.invalid/v1", artifact_root=tmp_path, persist_completed_generation=persist)
+    report = json.loads((tmp_path / result["run_id"] / "normalized-report.json").read_text())
+    assert len(persisted) == 1
+    assert result["business_record_id"] == 42 and result["database_writes"] == 1
+    assert report["business_record_id"] == 42
+    assert report["actual_calls"]["database_writes"] == 1
+
+
+def test_mysql_persistence_is_idempotent_and_uses_one_parameterized_insert(monkeypatch):
+    from backend.services.mysql_service import MySQLService
+    service = MySQLService.__new__(MySQLService)
+    calls = []
+    monkeypatch.setattr(service, "get_text_skill_generation_by_run_id", lambda *_: None)
+    monkeypatch.setattr(service, "execute_insert", lambda query, params, max_retries: calls.append((query, params, max_retries)) or 77)
+    generation = {"run_id": "round-17c-business-20260728T000000Z-abcdef1", "rag_status": "grounded", "source_ids": ["met-65625"], "selected_skill_id": "museum-product-explainer", "skill_version": "1.0.0", "skill_body_sha256": "a" * 64, "model_name": "qwen", "generation_time": 1.2, "actual_calls": {"qwen": 2}, "output": OUTPUT.model_dump()}
+    assert service.persist_text_skill_generation(user_id="U1", brief=BRIEF["brief"], generation=generation) == {"log_id": 77, "database_writes": 1, "transaction_status": "committed"}
+    assert len(calls) == 1 and calls[0][2] == 0 and "INSERT INTO generation_logs" in calls[0][0]
+    monkeypatch.setattr(service, "get_text_skill_generation_by_run_id", lambda *_: {"log_id": 77})
+    assert service.persist_text_skill_generation(user_id="U1", brief=BRIEF["brief"], generation=generation) == {"log_id": 77, "database_writes": 0, "transaction_status": "already_committed"}
+    assert len(calls) == 1
+
+
+def test_mysql_readback_is_allowlisted(monkeypatch):
+    from backend.services.mysql_service import MySQLService
+    service = MySQLService.__new__(MySQLService)
+    run_id = "round-17c-business-20260728T000000Z-abcdef1"
+    monkeypatch.setattr(service, "get_text_skill_generation_by_run_id", lambda *_: {"log_id": 9, "response_json": json.dumps({"run_id": run_id, "product_copy": "文案", "image_design_spec": "说明", "selected_skill_id": "museum-product-explainer", "secret": "must-not-leak"})})
+    body = service.read_text_skill_generation(user_id="U1", run_id=run_id)
+    assert body["log_id"] == 9 and body["product_copy"] == "文案"
+    assert "secret" not in body
+
+
 def test_business_flow_blocks_before_model_when_evidence_is_not_grounded(monkeypatch, tmp_path):
     monkeypatch.setattr(business, "freeze_evidence", lambda _: {"status": "insufficient_evidence", "sources": []})
     monkeypatch.setattr(business, "build_dashscope_client", lambda **kwargs: pytest.fail("model must not be constructed"))
@@ -70,16 +117,31 @@ def test_experimental_api_keeps_existing_v2_route_separate(app_module, client, m
     from backend.tests.conftest import login
     token = login(client)
     called = {}
+    writes = []
     def fake_generate(brief, **kwargs):
         called["brief"] = brief; called.update(kwargs)
+        receipt = kwargs["persist_completed_generation"]({"run_id": "round-17c-business-20260728T000000Z-abcdef1", "output": OUTPUT.model_dump(), "actual_calls": {"qwen": 2}, "source_ids": ["met-65625"]})
+        writes.append(receipt)
         return {"status": "success", "experimental_text_skill": True, "run_id": "round-17c-business-20260728T000000Z-abcdef1", "generation_time": 1.0, **OUTPUT.model_dump(), "sources": FROZEN["sources"], "selected_skill_id": "museum-product-explainer"}
     import backend.services.round17c_business as service
     monkeypatch.setattr(service, "generate_with_text_skill", fake_generate)
+    monkeypatch.setattr(app_module.mysql_service, "persist_text_skill_generation", lambda **kwargs: {"log_id": 88, "database_writes": 1, "transaction_status": "committed"}, raising=False)
     monkeypatch.setattr(app_module, "ROUND17C_BUSINESS_REPORT_ROOT", tmp_path)
     response = client.post("/api/v2/cultural-products/generate-with-text-skill", json=BRIEF, headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.get_json()["experimental_text_skill"] is True
     assert called["brief"]["product_type"] == "折叠阅读灯"
+    assert writes == [{"log_id": 88, "database_writes": 1, "transaction_status": "committed"}]
+
+
+def test_experimental_readback_endpoint_is_owned_and_allowlisted(app_module, client, monkeypatch):
+    from backend.tests.conftest import login
+    token = login(client)
+    run_id = "round-17c-business-20260728T000000Z-abcdef1"
+    monkeypatch.setattr(app_module.mysql_service, "read_text_skill_generation", lambda **kwargs: {"log_id": 88, "run_id": run_id, "product_copy": "文案", "image_design_spec": "说明"}, raising=False)
+    response = client.get(f"/api/v2/cultural-products/text-skill-generations/{run_id}", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.get_json()["data"]["log_id"] == 88
 
 
 def test_business_report_api_is_admin_only_and_fail_closed(app_module, client, monkeypatch, tmp_path):
