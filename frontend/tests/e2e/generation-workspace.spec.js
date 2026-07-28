@@ -71,6 +71,7 @@ async function openWorkspace(page, context, options = {}) {
   const generateSeen = deferred()
   const releaseGenerate = deferred()
   const generatePayloads = []
+  const generatePaths = []
   let generateRequests = 0
   const allowedOrigins = new Set([
     process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${process.env.PLAYWRIGHT_PORT || 3000}`,
@@ -150,6 +151,7 @@ async function openWorkspace(page, context, options = {}) {
     }
     if (pathname === '/api/v2/cultural-products/generate' || pathname === '/api/v2/cultural-products/generate-with-text-skill') {
       generateRequests += 1
+      generatePaths.push(pathname)
       generatePayloads.push(JSON.parse(route.request().postData() || '{}'))
       if (options.generateMode === 'hold-success') {
         generateSeen.resolve()
@@ -182,6 +184,7 @@ async function openWorkspace(page, context, options = {}) {
     forbiddenRequests,
     generateRequests: () => generateRequests,
     generatePayloads: () => generatePayloads,
+    generatePaths: () => generatePaths,
     pageErrors,
     releaseGenerate: () => releaseGenerate.resolve(),
     waitForGenerate: () => generateSeen.promise,
@@ -237,6 +240,7 @@ test.describe('桌面端生成工作台', () => {
     await page.getByRole('button', { name: '生成文创产品' }).click()
     await expect(page.getByRole('heading', { name: '测试数据：青花书签' })).toBeVisible()
     expect(harness.generateRequests()).toBe(1)
+    expect(harness.generatePaths()).toEqual(['/api/v2/cultural-products/generate'])
   })
 
   test('历史 v2 详情使用结构化字段并支持图片预览', async ({ page, context }) => {

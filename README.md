@@ -179,6 +179,14 @@ npm run eval:security
 
 ## 功能演示
 
+### 普通用户真实图片生成
+
+[![普通用户真实图片业务演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
+
+演示使用普通用户完成真实业务提交、文化证据检索、Qwen 文本生成、WAN 图片生成、MySQL 事务写入，以及创作记录与详情回看。该生产图片链路使用本地 RAG，不接入 Round 17C 的实验性文本 Skill Agent；DeepSeek Judge 调用为 0。
+
+### 文本 Skill Agent 演示
+
 [![智慧文创平台真实业务流程演示](docs/demo/smart-cultural-platform-demo-poster.png)](docs/demo/smart-cultural-platform-demo-1440p.webm)
 
 演示包含完整三视图 Brief、真实文化证据检索、Pydantic AI Agent 原生 Skill 调用、文本生成、一次 MySQL 事务写入及运营报告回看。录像展示的业务生成使用真实 Qwen 文本调用；图片模型调用为 0，DeepSeek Judge 不属于本次演示，文本 Skill 业务链路仍标注为 experimental。

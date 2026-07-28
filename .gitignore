@@ -24,6 +24,8 @@ playwright-demo-output/
 frontend/test-results/
 frontend/playwright-report/
 frontend/demo-test-report/
+frontend/user-image-demo-report/
+frontend/user-image-demo-videos/
 # Runtime images are persisted locally for controlled business smoke evidence;
 # they are data, never source assets.
 static/images/image_*.png

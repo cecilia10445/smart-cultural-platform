@@ -537,7 +537,10 @@ export default {
       this.ratingError = ''
 
       try {
-        const response = await axios.post('/api/v2/cultural-products/generate-with-text-skill', this.culturalBrief, { headers })
+        // The ordinary creation workspace uses the established V2 image
+        // workflow.  The text-Skill route remains a separate experimental API
+        // and must not replace normal user image generation.
+        const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, { headers })
         if (!this.validGeneration(response.data)) {
           this.error = '生成结果不完整，请稍后重试。'
           return
