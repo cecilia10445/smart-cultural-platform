@@ -16,10 +16,11 @@ class AvailableMySQLStub:
 def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("JWT_SECRET", "unit-test-secret")
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
-    sys.modules.pop("backend.app", None)
-    app = importlib.import_module("backend.app")
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    monkeypatch.setenv("TEST_USERS_DATA_PATH", str(data_dir / "test_users.json"))
+    sys.modules.pop("backend.app", None)
+    app = importlib.import_module("backend.app")
     app.backend_dir = str(tmp_path)
     app.users_data = {
         "users": [{"user_id": "U1", "username": "legacy", "password": "legacy-password", "role": "user", "name": "Legacy"}],

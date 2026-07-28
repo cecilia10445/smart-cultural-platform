@@ -10,6 +10,14 @@ frontend/playwright-report/
 frontend/test-results/
 evaluation/artifacts/
 evaluation/promptfoo/node_modules/
+# Round 17C controlled-run evidence and local Promptfoo state are never source.
+evaluation/promptfoo/evaluation/
+evaluation/promptfoo/.promptfoo*/
+tmp-home/
+*.webm
+playwright-demo-output/
+frontend/test-results/
+frontend/playwright-report/
 # Runtime images are persisted locally for controlled business smoke evidence;
 # they are data, never source assets.
 static/images/image_*.png

@@ -1,0 +1,12 @@
+{
+  "run_id": "round-17c-clean-20260728T000000Z-fixture01",
+  "technical_status": "completed",
+  "evaluation_validity": "judge_parse_error",
+  "integrity_status": "verified",
+  "actual_calls": {"qwen": 3, "deepseek": 4, "image": 0, "database_writes": 0},
+  "winner": null,
+  "arms": {
+    "baseline": {"product_copy": "清韵折叠阅读灯以竹木和纸罩提供柔和阅读光线。", "image_design_spec": "展开灯具置于米白背景，突出竹木纹理与透光纸罩。", "used_source_ids": ["fixture-source"], "latency_ms": 1000, "requests": 1, "dimensions": {}},
+    "skill_guided": {"product_copy": "折叠阅读灯以竹木和半透明纸罩回应书房与旅行阅读。", "image_design_spec": "画面强调折叠结构、暖光和清晰的收纳形态。", "used_source_ids": ["fixture-source"], "latency_ms": 1200, "requests": 1, "tool_trajectory": [{"tool": "load_generation_skill"}], "dimensions": {}}
+  }
+}

@@ -1,0 +1,18 @@
+description: Round 17C opaque AB pairwise position-bias check.
+providers:
+  - id: file://round17c_provider.py
+    label: candidate_0
+    config: { arm: baseline }
+  - id: file://round17c_provider.py
+    label: candidate_1
+    config: { arm: skill_guided }
+prompts:
+  - "{{output}}"
+tests:
+  - description: pairwise-ab
+    assert:
+      - type: select-best
+        provider: deepseek:deepseek-v4-pro
+        value: |-
+          只比较匿名 candidate_0 与 candidate_1 的文本交付质量，不评价图片，不得推断身份。
+          返回 JSON：winner_index（0 或 1）、winner_candidate_id（candidate_0 或 candidate_1）和 final_reason；三者必须一致，理由必须点名获胜 candidate ID。
