@@ -357,9 +357,11 @@ class MySQLService:
         """检查连接健康状态 - 现在总是返回True，因为每次查询都新建连接"""
         return True  # 由于每次查询都新建连接，健康检查不再必要
 
-    def get_user_history(self, user_id):
+    def get_user_history(self, user_id, limit=50, offset=0):
         """直接获取用户历史记录，简化逻辑"""
         try:
+            limit = min(max(int(limit), 1), 50)
+            offset = max(int(offset), 0)
             # 直接查询generation_logs表，不检查表是否存在
             history_query = """
             SELECT 
@@ -384,10 +386,10 @@ class MySQLService:
             FROM generation_logs 
             WHERE user_id = %s AND event_type = 'generate'  # 关键修改：只查询生成记录
             ORDER BY timestamp DESC
-            LIMIT 50
+            LIMIT %s OFFSET %s
             """
             
-            history_result = self.execute_query(history_query, (user_id,))
+            history_result = self.execute_query(history_query, (user_id, limit, offset))
             
             if history_result is None:
                 logger.warning(f"⚠️ 用户 {user_id} 历史记录查询返回None")
@@ -474,6 +476,47 @@ class MySQLService:
 
                     response_obj = _json_object(item.get('response_json'))
                     brief_obj = _json_object(item.get('brief_json'))
+                    if item.get('generation_kind') == 'round17c_text_skill':
+                        # Round 17C text generations intentionally do not have an
+                        # image.  Do not let them fall through to the legacy image
+                        # record DTO: that would render a broken-image card and
+                        # would also expose arbitrary JSON fields from the audit
+                        # payload.  Only the owner-scoped, user-facing fields are
+                        # projected here.
+                        run_id = response_obj.get('run_id')
+                        product_copy = response_obj.get('product_copy')
+                        design_spec = response_obj.get('image_design_spec')
+                        selected_skill_id = response_obj.get('selected_skill_id')
+                        source_ids = response_obj.get('source_ids')
+                        calls = response_obj.get('actual_calls')
+                        if not all(isinstance(value, str) and value for value in (run_id, product_copy, design_spec, selected_skill_id)):
+                            logger.warning("Skipping malformed text Skill history row %s", log_id)
+                            continue
+                        if not isinstance(source_ids, list) or not all(isinstance(value, str) and value for value in source_ids):
+                            logger.warning("Skipping text Skill history row with invalid sources %s", log_id)
+                            continue
+                        if not isinstance(calls, dict):
+                            calls = {}
+                        def _non_negative_int(value):
+                            return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+                        processed_history.append({
+                            'record_type': 'text_skill_generation',
+                            'log_id': log_id,
+                            'run_id': run_id,
+                            'created_at': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                            'status': 'completed',
+                            'product_copy_summary': product_copy[:220],
+                            'image_design_spec_summary': design_spec[:220],
+                            'selected_skill_id': selected_skill_id,
+                            'skill_version': response_obj.get('skill_version') if isinstance(response_obj.get('skill_version'), str) else '',
+                            'rag_status': response_obj.get('rag_status') if isinstance(response_obj.get('rag_status'), str) else 'unknown',
+                            'source_ids': source_ids,
+                            'database_writes': _non_negative_int(calls.get('database_writes')),
+                            'artifact_integrity': 'not_checked',
+                            'detail_url': f'/api/v2/cultural-products/text-skill-generations/{run_id}',
+                        })
+                        continue
                     is_v2 = item.get('prompt_template_version') == 'cultural-product-rag-v2'
                     if is_v2:
                         product_name = response_obj.get('product_name') or item.get('title') or ''
@@ -534,6 +577,19 @@ class MySQLService:
             logger.error(f"❌ 从MySQL获取用户历史记录失败: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    def get_user_history_count(self, user_id):
+        """Return the owner-scoped total used by the history pager."""
+        result = self.execute_query(
+            "SELECT COUNT(*) AS total FROM generation_logs WHERE user_id = %s AND event_type = 'generate'",
+            (user_id,),
+        )
+        if not isinstance(result, list) or not result or not isinstance(result[0], dict):
+            return None
+        try:
+            return max(int(result[0].get("total", 0)), 0)
+        except (TypeError, ValueError):
             return None
 
     def get_user_profile_dashboard(self, start_date=None, end_date=None):

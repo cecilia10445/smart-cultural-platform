@@ -123,7 +123,13 @@ async function openWorkspace(page, context, options = {}) {
       return
     }
     if (pathname === '/api/user/history') {
-      await fulfillJson(route, 200, { status: 'success', data: options.historyData || [] })
+      const offset = Number(new URL(route.request().url()).searchParams.get('offset') || 0)
+      const pageData = options.historyPages?.[offset]
+      await fulfillJson(route, 200, pageData || { status: 'success', data: options.historyData || [] })
+      return
+    }
+    if (pathname.startsWith('/api/v2/cultural-products/text-skill-generations/')) {
+      await fulfillJson(route, 200, { status: 'success', data: options.textSkillDetail || {} })
       return
     }
     if (pathname === '/api/recommendations/personalized') {
@@ -297,6 +303,55 @@ test.describe('桌面端生成工作台', () => {
     expect(harness.consoleErrors).toEqual([])
     expect(harness.pageErrors).toEqual([])
     expect(harness.forbiddenRequests).toEqual([])
+  })
+
+  test('文本 Skill 记录使用无图卡片并只显示已验证的业务详情', async ({ page, context }) => {
+    const runId = 'round-17c-business-20260728T103655Z-04934f7'
+    const historyData = [{
+      record_type: 'text_skill_generation', log_id: 5, run_id: runId, timestamp: '2026-07-28T18:37:04Z', status: 'completed',
+      product_copy_summary: '山水折叠阅读灯为书房与旅行阅读提供温和光线。',
+      image_design_spec_summary: '竹木灯体连接半透明纸罩，展开后形成稳定阅读光区。',
+      selected_skill_id: 'retail-product-copy', rag_status: 'grounded', source_ids: ['met-65625', 'met-51486'], database_writes: 1,
+      artifact_integrity: 'verified', detail_url: `/api/v2/cultural-products/text-skill-generations/${runId}`,
+    }]
+    const textSkillDetail = {
+      log_id: 5, run_id: runId, product_copy: '山水折叠阅读灯为书房与旅行阅读提供温和光线。',
+      image_design_spec: '竹木灯体连接半透明纸罩，展开后形成稳定阅读光区。', source_ids: ['met-65625', 'met-51486'],
+      selected_skill_id: 'retail-product-copy', skill_version: '1.0.0', tool_call_name: 'load_generation_skill', actual_calls: { qwen: 2 }, artifact_integrity: 'verified',
+    }
+    const harness = await openWorkspace(page, context, { historyData, textSkillDetail })
+    await page.getByRole('button', { name: /记录/ }).click()
+    await expect(page.getByText('文本 Skill 生成')).toBeVisible()
+    await expect(page.locator('.text-skill-history-entry .history-visual')).toHaveCount(0)
+    await page.getByRole('button', { name: '查看详情' }).click()
+    await expect(page.getByRole('dialog', { name: '文本 Skill 生成详情' })).toBeVisible()
+    await expect(page.getByText('load_generation_skill · skill_id=retail-product-copy')).toBeVisible()
+    await expect(page.getByText('met-51486')).toBeVisible()
+    await expect(page.getByText(/Judge|DeepSeek|AB\/BA/)).toHaveCount(0)
+    await page.getByRole('button', { name: '关闭文本 Skill 生成详情' }).click()
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
+  })
+
+  test('历史分页保持最新文本记录在首屏且可加载旧图片记录', async ({ page, context }) => {
+    const latest = {
+      record_type: 'text_skill_generation', log_id: 5, run_id: 'round-17c-business-20260728T103655Z-04934f7', timestamp: '2026-07-28T18:37:04Z',
+      product_copy_summary: '最新文本生成记录', image_design_spec_summary: '最新设计说明', selected_skill_id: 'retail-product-copy', source_ids: ['met-65625'], artifact_integrity: 'verified', detail_url: '/api/v2/cultural-products/text-skill-generations/round-17c-business-20260728T103655Z-04934f7',
+    }
+    const olderImage = { log_id: 2, prompt_template_version: 'cultural-product-rag-v2', product_name: '旧图片记录', presentation_mode: 'single_hero', selling_points: [], timestamp: '2026-07-27T18:37:04Z' }
+    const harness = await openWorkspace(page, context, { historyPages: {
+      0: { status: 'success', data: [latest], pagination: { offset: 0, limit: 1, total: 2, has_more: true } },
+      1: { status: 'success', data: [olderImage], pagination: { offset: 1, limit: 1, total: 2, has_more: false } },
+    } })
+    await page.getByRole('button', { name: /记录/ }).click()
+    await expect(page.getByText('已显示 1 / 2 条')).toBeVisible()
+    await expect(page.getByText('最新文本生成记录')).toBeVisible()
+    await page.getByRole('button', { name: '加载更多' }).click()
+    await expect(page.getByText('旧图片记录')).toBeVisible()
+    await expect(page.getByText('已显示 2 / 2 条')).toBeVisible()
+    await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0)
+    expect(harness.consoleErrors).toEqual([])
+    expect(harness.pageErrors).toEqual([])
   })
 
   test('切换方案、编辑维度和补充要求会更新稳定画面描述', async ({ page, context }) => {

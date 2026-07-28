@@ -195,7 +195,7 @@
             <div>
               <p class="section-index">记录</p>
               <h1 id="history-title">创作记录</h1>
-              <p>查看当前账户已经保存的创作结果。</p>
+              <p>查看当前账户已经保存的创作结果。已显示 {{ history.length }} / {{ historyTotal }} 条。</p>
             </div>
             <button type="button" class="secondary-button" :disabled="loadingHistory" @click="loadHistory">{{ loadingHistory ? '正在刷新' : '刷新记录' }}</button>
           </div>
@@ -207,24 +207,30 @@
             <button type="button" class="primary-button" @click="switchTab('generate')">去创作</button>
           </div>
           <div v-else-if="history.length" class="history-grid">
-            <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry">
-              <div class="history-visual">
+            <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry" :class="{ 'text-skill-history-entry': isTextSkillRecord(record) }">
+              <div v-if="!isTextSkillRecord(record)" class="history-visual">
                 <img v-if="record.image_url && !historyImageErrors[record.image_url]" :src="getImageUrl(record.image_url)" :alt="record.product_name || record.title || '产品展示图'" @error="markHistoryImageFailed(record.image_url)">
                 <div v-else class="history-image-fallback">图片无法加载</div>
               </div>
+              <div v-else class="text-skill-mark" aria-hidden="true">文<br>本</div>
               <div>
-                <p class="record-style">{{ isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录') }}</p>
-                <h2>{{ isV2Record(record) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录') }}</h2>
-                <template v-if="isV2Record(record)">
+                <p class="record-style">{{ isTextSkillRecord(record) ? '文本 Skill 生成' : (isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录')) }}</p>
+                <h2>{{ isTextSkillRecord(record) ? previewText(record.product_copy_summary, 58) : (isV2Record(record) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录')) }}</h2>
+                <template v-if="isTextSkillRecord(record)">
+                  <p>{{ previewText(record.image_design_spec_summary, 110) }}</p>
+                  <p class="text-skill-meta">Skill：{{ record.selected_skill_id }} · RAG 来源 {{ record.source_ids?.length || 0 }} 条</p>
+                </template>
+                <template v-else-if="isV2Record(record)">
                   <ul v-if="Array.isArray(record.selling_points) && record.selling_points.length" class="history-selling-points"><li v-for="point in record.selling_points.slice(0, 3)" :key="point">{{ point }}</li></ul>
                   <p v-else class="history-empty-copy">暂无核心卖点</p>
                 </template>
                 <p v-else>{{ previewText(record.content || record.prompt, 110) }}</p>
                 <time>{{ formatDate(record.timestamp || record.generation_time) }}</time>
-                <button type="button" class="secondary-button" @click="openDetail(record)">查看详情</button>
+                <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : openDetail(record)">查看详情</button>
               </div>
             </article>
           </div>
+          <button v-if="historyHasMore" type="button" class="secondary-button load-more-history" :disabled="loadingHistory" @click="loadHistory({ append: true })">加载更多</button>
         </section>
 
         <section v-else-if="activeTab === 'recommendations'" aria-labelledby="recommendations-title">
@@ -275,12 +281,14 @@
       </section>
     </div>
     <ProductDetailDialog :open="detailOpen" :detail="selectedDetail || {}" @close="detailOpen = false" />
+    <TextSkillGenerationDialog :open="textSkillDetailOpen" :detail="selectedTextSkillDetail || {}" @close="textSkillDetailOpen = false" />
   </main>
 </template>
 
 <script>
 import axios from 'axios'
 import ProductDetailDialog from './components/ProductDetailDialog.vue'
+import TextSkillGenerationDialog from './components/TextSkillGenerationDialog.vue'
 import {
   buildStylePrompt,
   DEFAULT_DIRECTION_ID,
@@ -293,7 +301,7 @@ const DEFAULT_DIRECTION = VISUAL_DIRECTIONS.find((direction) => direction.id ===
 
 export default {
   name: 'App',
-  components: { ProductDetailDialog },
+  components: { ProductDetailDialog, TextSkillGenerationDialog },
   data() {
     return {
       activeTab: 'generate',
@@ -320,6 +328,8 @@ export default {
       result: null,
       detailOpen: false,
       selectedDetail: null,
+      textSkillDetailOpen: false,
+      selectedTextSkillDetail: null,
       resultStyle: '',
       userInfo: null,
       imageFailed: false,
@@ -329,6 +339,8 @@ export default {
       ratingSaving: false,
       ratingError: '',
       history: [],
+      historyTotal: 0,
+      historyHasMore: false,
       loadingHistory: false,
       historyError: '',
       historyLoaded: false,
@@ -603,7 +615,7 @@ export default {
         this.isDownloading = false
       }
     },
-    async loadHistory() {
+    async loadHistory({ append = false } = {}) {
       if (this.loadingHistory) return
       const headers = this.authHeaders()
       if (!headers) {
@@ -613,17 +625,38 @@ export default {
       this.loadingHistory = true
       this.historyError = ''
       try {
-        const response = await axios.get('/api/user/history', { headers })
+        const offset = append ? this.history.length : 0
+        const response = await axios.get('/api/user/history', { headers, params: { offset } })
         if (response.data?.status !== 'success' || !Array.isArray(response.data.data)) {
           this.historyError = '创作记录暂时无法读取，请稍后重试。'
           return
         }
-        this.history = response.data.data
+        this.history = append ? [...this.history, ...response.data.data] : response.data.data
+        const pagination = response.data?.pagination
+        this.historyTotal = Number.isInteger(pagination?.total) && pagination.total >= this.history.length ? pagination.total : this.history.length
+        this.historyHasMore = pagination?.has_more === true && this.history.length < this.historyTotal
         this.historyLoaded = true
       } catch (error) {
         this.historyError = this.requestError(error, '创作记录')
       } finally {
         this.loadingHistory = false
+      }
+    },
+    isTextSkillRecord(record) { return record?.record_type === 'text_skill_generation' },
+    async openTextSkillDetail(record) {
+      if (!record?.detail_url || record.artifact_integrity !== 'verified') {
+        this.historyError = '该文本生成记录的完整性未通过验证。'
+        return
+      }
+      const headers = this.authHeaders()
+      if (!headers) { this.sessionExpired = true; return }
+      try {
+        const response = await axios.get(record.detail_url, { headers })
+        if (response.data?.status !== 'success' || !response.data?.data) throw new Error('TEXT_SKILL_DETAIL_UNAVAILABLE')
+        this.selectedTextSkillDetail = response.data.data
+        this.textSkillDetailOpen = true
+      } catch (error) {
+        this.historyError = this.requestError(error, '文本生成详情')
       }
     },
     async loadRecommendations() {
@@ -1389,6 +1422,21 @@ textarea:focus, input:focus, select:focus {
   font-size: .75rem;
   text-align: center;
 }
+.text-skill-mark {
+  display: grid;
+  place-content: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  background: #245244;
+  color: #f4ead0;
+  font-family: "Noto Serif CJK SC", "Songti SC", serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: .18em;
+  line-height: 1.45;
+  text-align: center;
+}
+.text-skill-meta { margin-top: .45rem !important; color: #245244 !important; font-size: .78rem !important; }
 .history-entry h2 {
   margin: 0 0 .55rem;
   overflow-wrap: anywhere;
@@ -1417,6 +1465,7 @@ textarea:focus, input:focus, select:focus {
   font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   font-size: .75rem;
 }
+.load-more-history { display:block; margin:1rem auto 0; }
 .reference-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

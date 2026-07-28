@@ -207,9 +207,49 @@ def test_experimental_readback_endpoint_is_owned_and_allowlisted(app_module, cli
     token = login(client)
     run_id = "round-17c-business-20260728T000000Z-abcdef1"
     monkeypatch.setattr(app_module.mysql_service, "read_text_skill_generation", lambda **kwargs: {"log_id": 88, "run_id": run_id, "product_copy": "文案", "image_design_spec": "说明"}, raising=False)
+    monkeypatch.setattr(app_module, "text_skill_artifact_integrity", lambda _run_id: "verified")
     response = client.get(f"/api/v2/cultural-products/text-skill-generations/{run_id}", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.get_json()["data"]["log_id"] == 88
+
+
+def test_text_skill_readback_rejects_unverified_artifact(app_module, client, monkeypatch):
+    from backend.tests.conftest import login
+    run_id = "round-17c-business-20260728T000000Z-abcdef1"
+    monkeypatch.setattr(app_module.mysql_service, "read_text_skill_generation", lambda **kwargs: {"log_id": 88, "run_id": run_id}, raising=False)
+    monkeypatch.setattr(app_module, "text_skill_artifact_integrity", lambda _run_id: "failed")
+    response = client.get(f"/api/v2/cultural-products/text-skill-generations/{run_id}", headers={"Authorization": f"Bearer {login(client)}"})
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "TEXT_SKILL_ARTIFACT_UNAVAILABLE"
+
+
+def test_text_skill_readback_does_not_cross_user_boundaries(app_module, client, monkeypatch):
+    from backend.tests.conftest import login
+    run_id = "round-17c-business-20260728T000000Z-abcdef1"
+    seen = []
+    def readback(*, user_id, run_id):
+        seen.append(user_id)
+        return {"log_id": 88, "run_id": run_id} if user_id == "U1" else None
+    monkeypatch.setattr(app_module.mysql_service, "read_text_skill_generation", readback, raising=False)
+    monkeypatch.setattr(app_module, "text_skill_artifact_integrity", lambda _run_id: "verified")
+    owner = client.get(f"/api/v2/cultural-products/text-skill-generations/{run_id}", headers={"Authorization": f"Bearer {login(client)}"})
+    other = client.get(f"/api/v2/cultural-products/text-skill-generations/{run_id}", headers={"Authorization": f"Bearer {login(client, 'admin', 'admin-password', 'admin')}"})
+    assert owner.status_code == 200 and other.status_code == 404 and seen == ["U1", "A1"]
+
+
+def test_history_keeps_user_ownership_and_marks_text_artifact_status(app_module, client, monkeypatch):
+    from backend.tests.conftest import login
+    seen = []
+    def history_for_owner(user_id, **_kwargs):
+        seen.append(user_id)
+        return [{"log_id": 5, "record_type": "text_skill_generation", "run_id": "round-17c-business-20260728T103655Z-04934f7", "product_copy_summary": "文案", "image_design_spec_summary": "说明", "selected_skill_id": "retail-product-copy", "source_ids": ["met-65625"], "detail_url": "/api/v2/cultural-products/text-skill-generations/round-17c-business-20260728T103655Z-04934f7"}]
+    monkeypatch.setattr(app_module.mysql_service, "get_user_history", history_for_owner, raising=False)
+    monkeypatch.setattr(app_module, "text_skill_artifact_integrity", lambda _run_id: "verified")
+    token = login(client)
+    response = client.get("/api/user/history", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200 and seen == ["U1"]
+    record = response.get_json()["data"][0]
+    assert record["artifact_integrity"] == "verified" and "judge" not in json.dumps(record).lower()
 
 
 def test_business_report_api_is_admin_only_and_fail_closed(app_module, client, monkeypatch, tmp_path):

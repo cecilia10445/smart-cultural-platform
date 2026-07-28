@@ -825,7 +825,21 @@ def get_cultural_product_text_skill_generation_api(run_id):
     result = mysql_service.read_text_skill_generation(user_id=user_info["user_id"], run_id=run_id)
     if result is None:
         return api_error("TEXT_SKILL_GENERATION_NOT_FOUND", "The requested generation record is unavailable.", 404)
+    integrity = text_skill_artifact_integrity(run_id)
+    if integrity != "verified":
+        return api_error("TEXT_SKILL_ARTIFACT_UNAVAILABLE", "The requested generation artifact is not verified.", 409, False, True)
+    result["artifact_integrity"] = integrity
     return jsonify({"status": "success", "data": result})
+
+
+def text_skill_artifact_integrity(run_id):
+    """Check only the sealed local artifact status for an owner-scoped record."""
+    try:
+        from backend.round17c_business_reports import BusinessReportUnavailable, public_business_run
+        report = public_business_run(ROUND17C_BUSINESS_REPORT_ROOT, run_id)
+        return report.get("integrity_status") if isinstance(report, dict) else "failed"
+    except (BusinessReportUnavailable, OSError, ValueError, UnicodeError):
+        return "failed"
 
 # 运营质量报告接口（固定本地 Promptfoo 输出，禁止客户端传路径）
 @app.route('/api/dashboard/quality-report', methods=['GET'])
@@ -1082,16 +1096,34 @@ def get_user_history():
     
     try:
         user_id = user_info['user_id']
+        try:
+            offset = max(int(request.args.get('offset', '0')), 0)
+        except (TypeError, ValueError):
+            return api_error("INVALID_HISTORY_OFFSET", "History offset must be a non-negative integer.", 400, False)
+        history_limit = 50
         
         # 优先使用MySQL服务
         if mysql_service is not None:
             print(f"📜 从MySQL获取用户历史记录: {user_id}")
-            history_data = mysql_service.get_user_history(user_id)
+            history_data = mysql_service.get_user_history(user_id, limit=history_limit, offset=offset)
             if history_data is not None:
+                # Integrity is deliberately resolved after the database query:
+                # ownership remains the SQL predicate, while a tampered local
+                # artifact never unlocks business output in the client.
+                for item in history_data:
+                    if isinstance(item, dict) and item.get("record_type") == "text_skill_generation":
+                        item["artifact_integrity"] = text_skill_artifact_integrity(item["run_id"])
+                        if item["artifact_integrity"] != "verified":
+                            item["detail_url"] = None
+                count_method = getattr(mysql_service, "get_user_history_count", None)
+                history_total = count_method(user_id) if callable(count_method) else len(history_data)
+                if not isinstance(history_total, int) or history_total < len(history_data):
+                    history_total = offset + len(history_data)
                 return jsonify({
                     'status': 'success',
                     'data': history_data,
-                    'dataSource': 'MySQL'
+                    'dataSource': 'MySQL',
+                    'pagination': {'offset': offset, 'limit': history_limit, 'total': history_total, 'has_more': offset + len(history_data) < history_total},
                 })
             else:
                 print(f"⚠️ MySQL查询返回None，用户: {user_id}")
@@ -1103,7 +1135,8 @@ def get_user_history():
                 return jsonify({
                     'status': 'success',
                     'data': history_data,
-                    'dataSource': 'Hive'
+                    'dataSource': 'Hive',
+                    'pagination': {'offset': 0, 'limit': len(history_data), 'total': len(history_data), 'has_more': False},
                 })
 
         return api_error("DATA_UNAVAILABLE", "Data services are temporarily unavailable.", 503, True, True)

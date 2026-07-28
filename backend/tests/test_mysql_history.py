@@ -31,9 +31,29 @@ def test_user_history_exposes_real_generation_log_id(monkeypatch):
     history = service.get_user_history("U1001")
 
     assert "id AS log_id" in observed["query"]
-    assert observed["params"] == ("U1001",)
+    assert observed["params"] == ("U1001", 50, 0)
     assert history[0]["log_id"] == 1
     assert history[0]["image_url"] == "/static/images/image_test.png"
+
+
+def test_history_query_is_owner_scoped_descending_and_paged(monkeypatch):
+    service = MySQLService()
+    observed = {}
+    def execute_query(query, params):
+        observed['query'], observed['params'] = query, params
+        return []
+    monkeypatch.setattr(service, 'execute_query', execute_query)
+    assert service.get_user_history('U1001', limit=20, offset=40) == []
+    assert observed['params'] == ('U1001', 20, 40)
+    assert 'WHERE user_id = %s' in observed['query'] and 'ORDER BY timestamp DESC' in observed['query']
+
+
+def test_history_count_is_owner_scoped(monkeypatch):
+    service = MySQLService()
+    seen = {}
+    monkeypatch.setattr(service, 'execute_query', lambda query, params: seen.update(query=query, params=params) or [{'total': 5}])
+    assert service.get_user_history_count('U1001') == 5
+    assert seen['params'] == ('U1001',) and 'WHERE user_id = %s' in seen['query']
 
 
 def test_v2_history_normalizes_nested_factual_background_and_citations(monkeypatch):
@@ -126,3 +146,33 @@ def test_v2_history_does_not_leak_json_string_factual_background(monkeypatch):
     assert result["factual_background"] == "不可泄漏"
     assert result["evidence_status"] == "insufficient_evidence"
     assert result["citations"] == []
+
+
+def test_text_skill_history_uses_a_dedicated_allowlisted_record_type(monkeypatch):
+    service = MySQLService()
+    monkeypatch.setattr(service, "execute_query", lambda query, params: [{
+        "log_id": 5, "generation_kind": "round17c_text_skill", "prompt_template_version": "round17c-text-skill-v1",
+        "timestamp": datetime(2026, 7, 28, 18, 37, 4), "prompt": "灯", "style": "text-skill", "image_url": None,
+        "title": "阅读灯", "content": "不得直接透传", "generation_time": 2, "content_length": 0,
+        "user_rating": None, "download_count": 0, "user_age": None, "user_gender": None,
+        "brief_json": "{}", "response_json": '{"run_id":"round-17c-business-20260728T103655Z-04934f7","rag_status":"grounded","source_ids":["met-65625"],"selected_skill_id":"retail-product-copy","skill_version":"1.0.0","actual_calls":{"qwen":2,"database_writes":1},"product_copy":"一盏适合阅读的折叠灯。","image_design_spec":"竹木与纸罩的连续设计说明。","secret":"must-not-leak"}',
+    }])
+
+    result = service.get_user_history("A2001")[0]
+
+    assert result["record_type"] == "text_skill_generation"
+    assert result["run_id"] == "round-17c-business-20260728T103655Z-04934f7"
+    assert result["detail_url"].endswith(result["run_id"])
+    assert result["selected_skill_id"] == "retail-product-copy"
+    assert "image_url" not in result
+    assert "secret" not in result and "product_copy" not in result
+
+
+def test_text_skill_history_skips_malformed_audit_payload(monkeypatch):
+    service = MySQLService()
+    monkeypatch.setattr(service, "execute_query", lambda query, params: [{
+        "log_id": 5, "generation_kind": "round17c_text_skill", "timestamp": datetime.now(), "prompt": "", "style": "", "image_url": None,
+        "title": "", "content": "", "generation_time": 0, "content_length": 0, "user_rating": None, "download_count": 0,
+        "user_age": None, "user_gender": None, "brief_json": "{}", "response_json": '{"run_id":"missing-output"}',
+    }])
+    assert service.get_user_history("A2001") == []
