@@ -24,7 +24,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     assert inspector.has_table("alembic_version")
     assert inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0005"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0006"
         create_table = connection.exec_driver_sql("SHOW CREATE TABLE generation_logs").one()[1]
         historical = connection.execute(sa.text(
             "SELECT id,user_id,event_type,timestamp,prompt,style,image_url,title,content,"
@@ -270,7 +270,7 @@ def test_generate_uses_migrated_disposable_mysql(app_module, client, monkeypatch
     post_downgrade_inspector = sa.inspect(database["engine"])
     assert post_downgrade_inspector.has_table("generation_logs")
     with database["engine"].connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0005"
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0006"
         assert connection.exec_driver_sql("SELECT COUNT(*) FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
         assert connection.exec_driver_sql("SELECT download_count FROM generation_logs WHERE id = %s", (body["log_id"],)).scalar_one() == 1
     assert post_downgrade_inspector.has_table("etl_batches")

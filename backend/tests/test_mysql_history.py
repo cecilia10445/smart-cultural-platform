@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pymysql
+
 from backend.services.mysql_service import MySQLService
 
 
@@ -34,6 +36,38 @@ def test_user_history_exposes_real_generation_log_id(monkeypatch):
     assert observed["params"] == ("U1001", 50, 0)
     assert history[0]["log_id"] == 1
     assert history[0]["image_url"] == "/static/images/image_test.png"
+
+
+def test_history_query_uses_pooled_dict_cursor_and_returns_records(monkeypatch):
+    row = {
+        "log_id": 9, "generation_kind": "cultural_product", "prompt_template_version": "v1",
+        "timestamp": datetime(2026, 7, 29, 12, 0, 0), "prompt": "青花", "style": "水墨",
+        "image_url": "/static/images/image_9.png", "title": "青花器", "content": "文案",
+        "generation_time": 1.2, "content_length": 2, "user_rating": None, "download_count": 0,
+        "user_age": None, "user_gender": None, "brief_json": None, "response_json": None,
+        "data_origin": "production",
+    }
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, _query, _params): return None
+        def fetchall(self): return [row]
+
+    class Connection:
+        def __init__(self): self.cursor_args = None; self.closed = False
+        def cursor(self, *args): self.cursor_args = args; return Cursor()
+        def close(self): self.closed = True
+
+    connection = Connection()
+    service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connection)
+
+    history = service.get_user_history("U1001")
+
+    assert history[0]["log_id"] == 9
+    assert connection.cursor_args == (pymysql.cursors.DictCursor,)
+    assert connection.closed is True
 
 
 def test_history_query_is_owner_scoped_descending_and_paged(monkeypatch):

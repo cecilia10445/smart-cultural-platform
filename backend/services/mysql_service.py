@@ -10,6 +10,12 @@ try:
     import pymysql
 except ImportError:
     pymysql = None
+try:
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import URL
+except ImportError:
+    create_engine = None
+    URL = None
 from typing import List, Dict, Any, Optional
 import json
 try:
@@ -95,6 +101,50 @@ class MySQLService:
         self.connection = None
         self.last_connect_time = 0
         self.connect_timeout = settings.mysql_connect_timeout_seconds
+        self.read_timeout = settings.mysql_read_timeout_seconds
+        self.write_timeout = settings.mysql_write_timeout_seconds
+        self.engine = self._create_engine(settings)
+
+    def _create_engine(self, settings):
+        """Create the process-local PyMySQL connection pool without changing SQL callers."""
+        if pymysql is None or create_engine is None or URL is None:
+            logger.error("MySQL connection pool is unavailable: missing PyMySQL or SQLAlchemy")
+            return None
+
+        return create_engine(
+            URL.create(
+                "mysql+pymysql",
+                username=self.username,
+                password=self.password,
+                host=self.host,
+                port=self.port,
+                database=self.database,
+            ),
+            pool_size=getattr(settings, "mysql_pool_size", 5),
+            max_overflow=getattr(settings, "mysql_pool_max_overflow", 5),
+            pool_timeout=getattr(settings, "mysql_pool_timeout_seconds", 10),
+            pool_recycle=getattr(settings, "mysql_pool_recycle_seconds", 1800),
+            pool_pre_ping=True,
+            connect_args={
+                "charset": "utf8mb4",
+                "autocommit": True,
+                "connect_timeout": self.connect_timeout,
+                "read_timeout": self.read_timeout,
+                "write_timeout": self.write_timeout,
+            },
+        )
+
+    def _borrow_connection(self):
+        """Borrow a raw DB-API connection; ``close`` returns it to the Engine pool."""
+        if self.engine is None:
+            raise RuntimeError("MySQL connection pool is unavailable")
+        return self.engine.raw_connection()
+
+    @staticmethod
+    def _invalidate_connection(connection):
+        invalidate = getattr(connection, "invalidate", None)
+        if callable(invalidate):
+            invalidate()
 
     def connect(self):
         """连接MySQL数据库 - 现在只用于检查连接是否可用"""
@@ -103,23 +153,10 @@ class MySQLService:
             if pymysql is None:
                 logger.error("PyMySQL is not installed")
                 return False
-            # 测试连接是否可用
-            test_connection = pymysql.connect(
-                host=self.host,
-                port=self.port,
-                user=self.username,
-                password=self.password,
-                database=self.database,
-                charset='utf8mb4',
-                cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True,
-                connect_timeout=self.connect_timeout,
-                read_timeout=load_settings().mysql_read_timeout_seconds,
-                write_timeout=load_settings().mysql_write_timeout_seconds,
-            )
+            test_connection = self._borrow_connection()
             
             # 测试连接
-            with test_connection.cursor() as cursor:
+            with test_connection.cursor(pymysql.cursors.DictCursor) as cursor:
                 cursor.execute("SELECT 1")
             
             logger.info("✅ MySQL连接测试成功")
@@ -142,21 +179,8 @@ class MySQLService:
         for attempt in range(max_retries + 1):
             connection = None
             try:
-                settings = load_settings()
-                connection = pymysql.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.username,
-                    password=self.password,
-                    database=self.database,
-                    charset='utf8mb4',
-                    cursorclass=pymysql.cursors.DictCursor,
-                    autocommit=True,
-                    connect_timeout=self.connect_timeout,
-                    read_timeout=settings.mysql_read_timeout_seconds,
-                    write_timeout=settings.mysql_write_timeout_seconds,
-                )
-                with connection.cursor() as cursor:
+                connection = self._borrow_connection()
+                with connection.cursor(pymysql.cursors.DictCursor) as cursor:
                     cursor.execute(query, params)
                     return cursor.lastrowid
             except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as error:
@@ -164,6 +188,7 @@ class MySQLService:
                 if error_code not in transient_error_codes or attempt >= max_retries:
                     logger.error("MySQL insert failed (code=%s)", error_code)
                     return None
+                self._invalidate_connection(connection)
                 logger.warning(
                     "Transient MySQL insert failure; retrying (code=%s, attempt=%s/%s)",
                     error_code,
@@ -182,29 +207,16 @@ class MySQLService:
         return None
 
     def execute_query(self, query, params=None, max_retries=2):
-        """执行MySQL查询，每次创建新连接避免竞争"""
+        """Execute a query using one connection borrowed from the Engine pool."""
         connection = None
         if pymysql is None:
             logger.error("PyMySQL is not installed")
             return None
         for attempt in range(max_retries + 1):
             try:
-                # 每次都创建新连接，避免连接复用问题
-                connection = pymysql.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.username,
-                    password=self.password,
-                    database=self.database,
-                    charset='utf8mb4',
-                    cursorclass=pymysql.cursors.DictCursor,
-                    autocommit=True,
-                    connect_timeout=self.connect_timeout,
-                    read_timeout=load_settings().mysql_read_timeout_seconds,
-                    write_timeout=load_settings().mysql_write_timeout_seconds,
-                )
+                connection = self._borrow_connection()
                 
-                with connection.cursor() as cursor:
+                with connection.cursor(pymysql.cursors.DictCursor) as cursor:
                     cursor.execute(query, params)
                     if query.strip().upper().startswith('SELECT'):
                         result = cursor.fetchall()
@@ -223,6 +235,7 @@ class MySQLService:
                     logger.warning(f"⚠️ MySQL操作错误 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
                     
                 if attempt < max_retries:
+                    self._invalidate_connection(connection)
                     time.sleep(1)
                     continue
                 else:
@@ -334,14 +347,8 @@ class MySQLService:
             return None
         connection = None
         try:
-            settings = load_settings()
-            connection = pymysql.connect(
-                host=self.host, port=self.port, user=self.username, password=self.password,
-                database=self.database, charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
-                autocommit=False, connect_timeout=self.connect_timeout,
-                read_timeout=settings.mysql_read_timeout_seconds, write_timeout=settings.mysql_write_timeout_seconds,
-            )
-            with connection.cursor() as cursor:
+            connection = self._borrow_connection()
+            with connection.cursor(pymysql.cursors.DictCursor) as cursor:
                 cursor.execute("SELECT 1 FROM generation_logs LIMIT 0")
                 connection.begin()
                 connection.rollback()
@@ -354,8 +361,8 @@ class MySQLService:
                 connection.close()
 
     def check_connection_health(self):
-        """检查连接健康状态 - 现在总是返回True，因为每次查询都新建连接"""
-        return True  # 由于每次查询都新建连接，健康检查不再必要
+        """Check pool-backed database availability without retaining a connection."""
+        return self.connect()
 
     def get_user_history(self, user_id, limit=50, offset=0):
         """直接获取用户历史记录，简化逻辑"""
@@ -1071,10 +1078,13 @@ class MySQLService:
             return None
     
     def close(self):
-        """关闭连接"""
+        """Dispose pooled connections during application shutdown."""
         if self.connection:
             self.connection.close()
             logger.info("✅ MySQL连接已关闭")
+        if self.engine is not None:
+            self.engine.dispose()
+            logger.info("✅ MySQL连接池已关闭")
 
 # 创建全局实例
 mysql_service = MySQLService()

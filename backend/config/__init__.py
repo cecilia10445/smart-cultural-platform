@@ -48,6 +48,10 @@ class Settings:
     mysql_connect_timeout_seconds: int
     mysql_read_timeout_seconds: int
     mysql_write_timeout_seconds: int
+    mysql_pool_size: int
+    mysql_pool_max_overflow: int
+    mysql_pool_timeout_seconds: int
+    mysql_pool_recycle_seconds: int
     run_real_business_smoke: bool
     smoke_test_username: str | None
     smoke_test_password: str | None
@@ -59,8 +63,8 @@ class Settings:
 
 def load_settings():
     # The application configuration lives next to this module, not necessarily
-    # in the process working directory (for example Flask CLI starts at repo root).
-    load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+    # in the process working directory (for example an ASGI server starts at repo root).
+    load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
     return Settings(
         jwt_secret=os.getenv("JWT_SECRET", ""),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
@@ -84,6 +88,10 @@ def load_settings():
         mysql_connect_timeout_seconds=_int_env("MYSQL_CONNECT_TIMEOUT_SECONDS", 5),
         mysql_read_timeout_seconds=_int_env("MYSQL_READ_TIMEOUT_SECONDS", 10),
         mysql_write_timeout_seconds=_int_env("MYSQL_WRITE_TIMEOUT_SECONDS", 10),
+        mysql_pool_size=_int_env("MYSQL_POOL_SIZE", 5),
+        mysql_pool_max_overflow=_int_env("MYSQL_POOL_MAX_OVERFLOW", 5),
+        mysql_pool_timeout_seconds=_int_env("MYSQL_POOL_TIMEOUT_SECONDS", 10),
+        mysql_pool_recycle_seconds=_int_env("MYSQL_POOL_RECYCLE_SECONDS", 1800),
         run_real_business_smoke=_bool_env("RUN_REAL_BUSINESS_SMOKE"),
         smoke_test_username=os.getenv("SMOKE_TEST_USERNAME") or None,
         smoke_test_password=os.getenv("SMOKE_TEST_PASSWORD") or None,

@@ -136,9 +136,10 @@ def test_persistence_failure_logs_do_not_expose_sensitive_values(app_module, cli
 
 
 class FakeCursor:
-    def __init__(self, lastrowid=99, execute_error=None):
+    def __init__(self, lastrowid=99, execute_error=None, rows=None):
         self.lastrowid = lastrowid
         self.execute_error = execute_error
+        self.rows = [] if rows is None else rows
 
     def __enter__(self):
         return self
@@ -146,9 +147,12 @@ class FakeCursor:
     def __exit__(self, *_args):
         return False
 
-    def execute(self, _query, _params):
+    def execute(self, _query, _params=None):
         if self.execute_error:
             raise self.execute_error
+
+    def fetchall(self):
+        return self.rows
 
 
 class FakeConnection:
@@ -156,17 +160,19 @@ class FakeConnection:
         self._cursor = cursor
         self.closed = False
 
-    def cursor(self):
+    def cursor(self, *args, **kwargs):
+        self.cursor_args = args
+        self.cursor_kwargs = kwargs
         return self._cursor
 
     def close(self):
         self.closed = True
 
 
-def test_execute_insert_returns_lastrowid_and_closes_connection(monkeypatch):
+def test_execute_insert_returns_lastrowid_and_releases_pooled_connection(monkeypatch):
     connection = FakeConnection(FakeCursor(lastrowid=1234))
-    monkeypatch.setattr(pymysql, "connect", lambda **_kwargs: connection)
     service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connection)
 
     result = service.execute_insert("INSERT INTO generation_logs (user_id) VALUES (%s)", ("U1",))
 
@@ -177,8 +183,8 @@ def test_execute_insert_returns_lastrowid_and_closes_connection(monkeypatch):
 def test_execute_insert_does_not_retry_integrity_errors(monkeypatch, caplog):
     connection = FakeConnection(FakeCursor(execute_error=pymysql.err.IntegrityError(1062, "duplicate")))
     connection_attempts = []
-    monkeypatch.setattr(pymysql, "connect", lambda **_kwargs: connection_attempts.append(True) or connection)
     service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connection_attempts.append(True) or connection)
 
     with caplog.at_level(logging.ERROR):
         result = service.execute_insert("INSERT INTO generation_logs (user_id) VALUES (%s)", ("private-value",))
@@ -194,11 +200,43 @@ def test_execute_insert_retries_only_transient_connection_errors(monkeypatch):
         FakeConnection(FakeCursor(execute_error=pymysql.err.OperationalError(2013, "connection lost"))),
         FakeConnection(FakeCursor(lastrowid=88)),
     ]
-    monkeypatch.setattr(pymysql, "connect", lambda **_kwargs: connections.pop(0))
     monkeypatch.setattr("backend.services.mysql_service.time.sleep", lambda _seconds: None)
     service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connections.pop(0))
 
     result = service.execute_insert("INSERT INTO generation_logs (user_id) VALUES (%s)", ("U1",), max_retries=1)
 
     assert result == 88
     assert connections == []
+
+
+def test_mysql_service_configures_sqlalchemy_connection_pool():
+    service = MySQLService()
+
+    assert service.engine is not None
+    assert service.engine.pool._pre_ping is True
+    assert service.engine.pool.size() == 5
+
+    service.close()
+
+
+def test_connect_uses_and_releases_a_pooled_connection(monkeypatch):
+    connection = FakeConnection(FakeCursor())
+    service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connection)
+
+    assert service.connect() is True
+    assert connection.closed is True
+
+
+def test_execute_query_uses_dict_cursor_and_preserves_dict_rows(monkeypatch):
+    expected = [{"log_id": 1, "title": "测试标题"}]
+    connection = FakeConnection(FakeCursor(rows=expected))
+    service = MySQLService()
+    monkeypatch.setattr(service, "_borrow_connection", lambda: connection)
+
+    result = service.execute_query("SELECT id AS log_id, title FROM generation_logs")
+
+    assert result == expected
+    assert connection.cursor_args == (pymysql.cursors.DictCursor,)
+    assert connection.closed is True

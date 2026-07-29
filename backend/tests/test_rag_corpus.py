@@ -54,14 +54,14 @@ def test_six_known_categories_and_compound_porcelain_term_retrieve_at_top_one(qu
 
 def test_no_match_and_cross_category_ambiguity_are_conservative():
     service = CulturalRagService(CORPUS_ROOT)
-    assert service.decide_query("现代汽车发动机").status == "insufficient_evidence"
+    assert service.decide_query("现代汽车发动机").status == "no_match"
     ambiguous = service.decide_query("中国传统艺术文创")
-    assert ambiguous.status == "insufficient_evidence"
-    assert ambiguous.reason == "below_minimum_score"
+    assert ambiguous.status == "no_match"
+    assert ambiguous.reason == "below_minimum_score_no_rag"
     assert [round(item.score, 3) for item in ambiguous.candidates] == [0.318, 0.3, 0.269]
     strong_ambiguity = service.decide_query("青花瓷 山水画")
-    assert strong_ambiguity.status == "insufficient_evidence"
-    assert strong_ambiguity.reason == "ambiguous_top_results"
+    assert strong_ambiguity.status == "no_match"
+    assert strong_ambiguity.reason == "ambiguous_top_results_no_rag"
     assert strong_ambiguity.results == ()
 
 
@@ -109,7 +109,7 @@ def test_runtime_retrieval_does_not_access_met_api(monkeypatch):
         "requests.sessions.Session.request",
         lambda *_args, **_kwargs: pytest.fail("runtime retrieval must remain local"),
     )
-    assert CulturalRagService(CORPUS_ROOT).decide_query("青花瓷").status == "grounded"
+    assert CulturalRagService(CORPUS_ROOT).decide_query("青花瓷").status == "matched"
 
 
 def test_retrieval_aliases_never_enter_evidence_block():

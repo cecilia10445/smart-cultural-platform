@@ -37,7 +37,7 @@ export default {
     safeCitations() { if (this.evidenceStatus !== 'grounded') return []; const v = this.detail?.factual_background; const raw = Array.isArray(this.detail?.citations) ? this.detail.citations : (v && typeof v === 'object' && Array.isArray(v.citations) ? v.citations : []); return raw.filter((x) => x && typeof x === 'object' && typeof x.source_id === 'string' && typeof x.source_url === 'string').map((x) => ({ source_id: x.source_id, title: typeof x.title === 'string' ? x.title : '', source_url: x.source_url, license: typeof x.license === 'string' ? x.license : '' })) },
   },
   watch: { open(v) { this.imageError = false; this.previewOpen = false; if (v) this.$nextTick(() => { const d = this.$refs.dialog; if (d && !d.open) d.showModal() }) }, previewOpen(v) { this.$nextTick(() => { const d = this.$refs.previewDialog; if (v && d && !d.open) d.showModal(); else if (!v && d?.open) d.close() }) } },
-  methods: { safeText(v) { return typeof v === 'string' ? v : '' }, close() { this.previewOpen = false; this.$refs.dialog?.close(); this.$emit('close') } },
+  methods: { safeText(v) { return typeof v === 'string' ? v : (v && typeof v === 'object' && typeof v.text === 'string' ? v.text : '') }, close() { this.previewOpen = false; this.$refs.dialog?.close(); this.$emit('close') } },
 }
 </script>
 <style scoped>

@@ -161,9 +161,9 @@
                   <p v-else>未找到足够可靠的本地馆藏证据；设计内容仍可作为创意方案阅读。</p>
                 </aside>
                 <template v-if="isStructuredResult(result)">
-                  <section class="content-copy"><h4>创意来源</h4><p>{{ result.creative_origin }}</p></section>
+                  <section class="content-copy"><h4>创意来源</h4><p>{{ displayText(result.creative_origin) }}</p></section>
                   <section class="content-copy"><h4>设计思路</h4><p>{{ result.design_concept }}</p></section>
-                  <section class="content-copy"><h4>文化意义</h4><p>{{ result.cultural_meaning }}</p></section>
+                  <section class="content-copy"><h4>文化意义</h4><p>{{ displayText(result.cultural_meaning) }}</p></section>
                   <section class="content-copy"><h4>核心卖点</h4><ul class="selling-points"><li v-for="point in result.selling_points" :key="point">{{ point }}</li></ul></section>
                 </template>
                 <template v-else>
@@ -322,6 +322,7 @@ export default {
       selectedDirectionId: DEFAULT_DIRECTION_ID,
       supplement: '',
       loading: false,
+      generationKey: null,
       error: '',
       fieldErrors: {},
       sessionExpired: false,
@@ -387,6 +388,7 @@ export default {
     },
   },
   methods: {
+    displayText(v) { return typeof v === 'string' ? v : (v && typeof v === 'object' && typeof v.text === 'string' ? v.text : '') },
     switchTab(tab) {
       this.activeTab = tab
       if (tab === 'history') this.loadHistory()
@@ -471,6 +473,7 @@ export default {
       this.downloadError = ''
       this.userRating = 0
       this.ratingError = ''
+      this.generationKey = null
     },
     validGeneration(body) {
       if (body?.status === 'success' && body.experimental_text_skill === true) {
@@ -487,7 +490,7 @@ export default {
         && source.source_url.startsWith('https://www.metmuseum.org/art/collection/search/')
       const validEvidence = body?.evidence_status === 'grounded'
         ? Array.isArray(citations) && citations.length > 0 && citations.every(validCitation)
-        : body?.evidence_status === 'insufficient_evidence'
+        : (body?.evidence_status === 'insufficient_evidence' || body?.evidence_status === 'creative_only')
           && Array.isArray(citations) && citations.length === 0
       const structured = this.isStructuredResult(body)
       const legacy = typeof body?.design_interpretation === 'string' && body.design_interpretation
@@ -505,9 +508,13 @@ export default {
         && body.log_id !== null
     },
     isStructuredResult(body) {
-      return typeof body?.creative_origin === 'string' && body.creative_origin
+      const co = body?.creative_origin
+      const cm = body?.cultural_meaning
+      const validOrigin = (typeof co === 'string' && co) || (typeof co === 'object' && typeof co?.text === 'string' && co.text)
+      const validMeaning = (typeof cm === 'string' && cm) || (typeof cm === 'object' && typeof cm?.text === 'string' && cm.text)
+      return validOrigin
         && typeof body?.design_concept === 'string' && body.design_concept
-        && typeof body?.cultural_meaning === 'string' && body.cultural_meaning
+        && validMeaning
         && Array.isArray(body?.selling_points) && body.selling_points.length >= 3 && body.selling_points.length <= 5
         && body.selling_points.every((point) => typeof point === 'string' && point)
     },
@@ -540,12 +547,16 @@ export default {
         // The ordinary creation workspace uses the established V2 image
         // workflow.  The text-Skill route remains a separate experimental API
         // and must not replace normal user image generation.
-        const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, { headers })
+        this.generationKey ||= crypto.randomUUID()
+        const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, {
+          headers: { ...headers, 'Idempotency-Key': this.generationKey },
+        })
         if (!this.validGeneration(response.data)) {
           this.error = '生成结果不完整，请稍后重试。'
           return
         }
         this.result = response.data
+        this.generationKey = null
         this.resultStyle = style
         this.loadHistory()
       } catch (error) {

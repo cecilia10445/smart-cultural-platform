@@ -120,12 +120,12 @@ def test_image_prompt_is_deterministic_for_each_presentation_mode(mode, expected
 
 def test_factual_background_is_deterministic_and_has_no_citations():
     brief = validate_cultural_product_request(payload())
-    assert factual_background(brief)["status"] == "insufficient_evidence"
+    assert factual_background(brief)["status"] == "creative_only"
     brief["confirmed_facts"] = []
     empty = factual_background(brief)
-    assert empty["status"] == "insufficient_evidence"
+    assert empty["status"] == "creative_only"
     assert empty["citations"] == []
-    assert empty["evidence_mode"] == "user_supplied_only"
+    assert empty["evidence_mode"] == "creative_generation_without_rag"
 
 
 @pytest.mark.parametrize("raw,code", [
@@ -208,6 +208,51 @@ def test_v2_api_persists_validated_json_and_returns_insert_id(app_module, client
     persisted = database.generation_inserts[0][1]
     assert json.loads(persisted[-2])["product_type"] == "bookmark"
     assert json.loads(persisted[-1])["product_name"] == "青花书签"
+
+
+def test_v2_same_idempotency_key_replays_success_without_second_generation(app_module, client, monkeypatch):
+    class IdempotencyDatabase(V2MySQLStub):
+        def __init__(self):
+            super().__init__()
+            self.attempt = None
+            self.response = None
+
+        def execute_insert(self, query, params):
+            self.inserts.append((query, params))
+            if "INSERT INTO generation_attempts" in query:
+                if self.attempt:
+                    return None
+                self.attempt = {
+                    "request_id": params[0], "user_id": params[1], "brief_sha256": params[5],
+                    "status": "RUNNING", "error_code": None, "generation_log_id": None,
+                }
+                return 1
+            if "INSERT INTO generation_logs" in query:
+                self.generation_inserts.append((query, params))
+                self.response = json.loads(params[-1])
+                self.attempt.update(status="SUCCEEDED", generation_log_id=901)
+                return 901
+            return 1
+
+        def execute_query(self, query, params, max_retries=0):
+            if "WHERE user_id=%s AND idempotency_key=%s" in query:
+                return [self.attempt]
+            if "FROM generation_logs WHERE id=%s" in query:
+                return [{"id": 901, "response_json": self.response}]
+            return 1
+
+    database = IdempotencyDatabase()
+    model = V2ModelStub()
+    monkeypatch.setattr(app_module, "mysql_service", database)
+    monkeypatch.setattr(app_module, "aigc_service", model)
+    monkeypatch.setattr(app_module, "persist_generated_image", lambda *_args, **_kwargs: "/static/images/test.png")
+    headers = {"Authorization": f"Bearer {login(client)}", "Idempotency-Key": "same-generation"}
+    first = client.post("/api/v2/cultural-products/generate", json=payload(), headers=headers)
+    second = client.post("/api/v2/cultural-products/generate", json=payload(), headers=headers)
+    assert first.status_code == second.status_code == 200
+    assert second.get_json()["log_id"] == 901
+    assert len(database.generation_inserts) == 1
+    assert model.image_calls == 1
 
 
 def test_v2_rag_success_returns_only_verified_official_sources(app_module, client, monkeypatch):
