@@ -198,6 +198,7 @@ Normalized Report / HTML / SHA Seal
 ## 演示入口
 
 ### 普通用户真实图片生成
+![Uploading image.png…]()
 
 [![普通用户真实图片业务演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
 
