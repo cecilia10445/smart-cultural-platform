@@ -1,7 +1,7 @@
 # Repository Working Rules
 
-- 项目开发目录为 `/home/lily/桌面/smart-cultural-platform`；保持 Vue、Flask、MySQL、Hive、PySpark 和 DashScope 技术路线。
-- 当前不引入 Redis、Celery、PostgreSQL、pgvector、FastAPI、多 Agent 或 LoRA；先建立真实、可验证的 MySQL → Hive → PySpark → MySQL 数据链路。
+- 项目开发目录为 `/home/lily/桌面/smart-cultural-platform`；保持 Vue、FastAPI、MySQL、Hive、PySpark 和 DashScope 技术路线。
+- 当前不引入 Redis、Celery、PostgreSQL、pgvector、多 Agent 或 LoRA；当前主线是保持后端 FastAPI 架构清晰与 API 契约可验证，MySQL、Hive 与 PySpark 链路按实际业务需求维护。
 - 每轮只处理一个明确目标；修改后必须运行相关测试，并如实报告通过、失败和跳过结果，不得编造测试结果。
 - 禁止使用 `git add .`、`git add -A` 或通配符暂存；只能使用明确文件路径暂存本轮文件。
 - 不提交 `.env`、密码、密钥、虚拟环境、`node_modules`、`dist`、日志、测试用户 JSON 或数据集。

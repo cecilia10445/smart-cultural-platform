@@ -96,19 +96,15 @@ def test_storage_preflight_uses_existing_table_and_rolls_back(monkeypatch):
         def __exit__(self, *_args): return False
         def execute(self, query): events.append(query)
     class Connection:
-        def cursor(self): return Cursor()
+        def cursor(self, *_args, **_kwargs): return Cursor()
         def begin(self): events.append("BEGIN")
         def rollback(self): events.append("ROLLBACK")
         def close(self): events.append("CLOSE")
-    class FakePyMySQL:
-        class cursors: DictCursor = object
-        @staticmethod
-        def connect(**_kwargs): return Connection()
     settings = SimpleNamespace(mysql_read_timeout_seconds=1, mysql_write_timeout_seconds=1)
     service = MySQLService.__new__(MySQLService)
     service.host, service.port, service.username, service.password, service.database, service.connect_timeout = "host", 3306, "user", "password", "test_db", 1
-    monkeypatch.setattr(module, "pymysql", FakePyMySQL)
     monkeypatch.setattr(module, "load_settings", lambda: settings)
+    monkeypatch.setattr(service, "_borrow_connection", lambda: Connection())
     assert service.preflight_text_skill_generation_storage() == {"database": "test_db", "table": "generation_logs", "transaction_status": "rolled_back"}
     assert any("generation_logs" in event for event in events) and events[-2:] == ["ROLLBACK", "CLOSE"]
 

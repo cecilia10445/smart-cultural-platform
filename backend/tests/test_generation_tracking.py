@@ -51,6 +51,23 @@ def test_tracker_hash_is_stable_and_distinct_request_ids_do_not_share_rows():
     assert first.request_id != second.request_id
 
 
+def test_tracker_returns_existing_attempt_for_duplicate_idempotency_key():
+    class DuplicateDatabase(Database):
+        def execute_insert(self, query, params):
+            self.inserts.append((query, params))
+            return None
+
+        def execute_query(self, query, params, max_retries=0):
+            assert "idempotency_key" in query
+            assert params == ("U1", "same-key")
+            return [{"request_id": "existing", "user_id": "U1", "brief_sha256": GenerationTracker.brief_sha256(brief()), "status": "RUNNING", "error_code": None, "generation_log_id": None}]
+
+    tracker = GenerationTracker(DuplicateDatabase(), "new", "U1", "test", brief(), "cultural-product-v1", idempotency_key="same-key")
+    existing = tracker.start()
+    assert existing["request_id"] == "existing"
+    assert tracker._started is False
+
+
 def test_quality_report_is_content_free_and_keeps_missing_usage_null():
     attempts = [
         {"request_id": "r1", "status": "SUCCEEDED", "failed_stage": None, "error_code": None, "brief_sha256": "a" * 64},

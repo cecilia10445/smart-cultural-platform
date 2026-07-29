@@ -32,10 +32,10 @@ class CulturalRagService:
         candidates = tuple(self.retriever.search(query, top_k))
         qualified = tuple(item for item in candidates if item.score >= MIN_RELEVANCE_SCORE)
         if not qualified:
-            return RetrievalDecision("insufficient_evidence", "below_minimum_score", query, (), candidates)
+            return RetrievalDecision("no_match", "below_minimum_score_no_rag", query, (), candidates)
         if len(qualified) > 1 and qualified[0].score - qualified[1].score < AMBIGUITY_SCORE_GAP:
-            return RetrievalDecision("insufficient_evidence", "ambiguous_top_results", query, (), candidates)
-        return RetrievalDecision("grounded", "reliable_match", query, qualified, candidates)
+            return RetrievalDecision("no_match", "ambiguous_top_results_no_rag", query, (), candidates)
+        return RetrievalDecision("matched", "reliable_match", query, qualified, candidates)
 
     def retrieve(self, brief, top_k=MAX_RESULTS):
         return self.decide_query(self.query_for_brief(brief), top_k)
@@ -53,10 +53,19 @@ class CulturalRagService:
             or any(not isinstance(source_id, str) for source_id in used_ids)
             or len(used_ids) != len(set(used_ids))
             or not set(used_ids).issubset(available_ids)
-            or evidence_status not in {"grounded", "insufficient_evidence"}
+            or evidence_status not in {
+                "grounded",
+                "insufficient_evidence",
+                "creative_only",
+            }
             or (evidence_status == "grounded" and not used_ids)
-            or (evidence_status == "insufficient_evidence" and used_ids)
-            or (not available_ids and evidence_status != "insufficient_evidence")
+            or (evidence_status in {
+                "insufficient_evidence",
+                "creative_only",
+            } and used_ids)
+
+            or (not available_ids and evidence_status != "insufficient_evidence"
+                and evidence_status != "creative_only")
         ):
             raise ValueError("MODEL_INVALID_CITATIONS")
         by_id = {result.source_id: result for result in decision.results}

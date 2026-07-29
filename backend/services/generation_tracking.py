@@ -14,9 +14,11 @@ class TrackingPersistenceError(RuntimeError):
 
 
 class GenerationTracker:
-    def __init__(self, mysql_service, request_id, user_id, data_origin, brief, template_version):
+    def __init__(self, mysql_service, request_id, user_id, data_origin, brief, template_version, idempotency_key=None):
         self.mysql_service = mysql_service
         self.request_id = request_id
+        self.user_id = user_id
+        self.idempotency_key = idempotency_key
         self.started_at = time.perf_counter()
         self._started = False
         self._attempt = (user_id, data_origin, "cultural_product", template_version, self.brief_sha256(brief))
@@ -30,12 +32,31 @@ class GenerationTracker:
         return max(0, round((time.perf_counter() - started) * 1000))
 
     def start(self):
-        query = """INSERT INTO generation_attempts
-            (request_id,user_id,data_origin,generation_kind,prompt_template_version,brief_sha256,status)
-            VALUES (%s,%s,%s,%s,%s,%s,'RUNNING')"""
-        if self.mysql_service.execute_insert(query, (self.request_id, *self._attempt)) is None:
+        if self.idempotency_key:
+            query = """INSERT INTO generation_attempts
+                (request_id,user_id,data_origin,generation_kind,prompt_template_version,brief_sha256,idempotency_key,status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'RUNNING')"""
+            values = (self.request_id, *self._attempt, self.idempotency_key)
+        else:
+            query = """INSERT INTO generation_attempts
+                (request_id,user_id,data_origin,generation_kind,prompt_template_version,brief_sha256,status)
+                VALUES (%s,%s,%s,%s,%s,%s,'RUNNING')"""
+            values = (self.request_id, *self._attempt)
+        if self.mysql_service.execute_insert(query, values) is None:
+            if self.idempotency_key:
+                existing = self.mysql_service.execute_query(
+                    """SELECT request_id,user_id,brief_sha256,status,error_code,generation_log_id
+                       FROM generation_attempts
+                       WHERE user_id=%s AND idempotency_key=%s
+                       LIMIT 1""",
+                    (self.user_id, self.idempotency_key),
+                    max_retries=0,
+                )
+                if isinstance(existing, list) and existing and isinstance(existing[0], dict):
+                    return existing[0]
             raise TrackingPersistenceError("TRACKING_INIT_FAILED")
         self._started = True
+        return None
 
     def record_metric(self, stage, model_name, status, started, error=None, usage=None, image_count=None):
         usage = usage or {}
