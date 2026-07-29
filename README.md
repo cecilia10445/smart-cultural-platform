@@ -200,7 +200,9 @@ Normalized Report / HTML / SHA Seal
 ### 普通用户真实图片生成
 ![普通用户真实图片业务演示](/docs/demo/ScreenShot_2026-07-29_134610_256.png)
 [![普通用户真实图片业务演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
-
+![普通用户真实图片业务演示](/docs/demo/ScreenShot_2026-07-29_134610_256.png)
+![普通用户真实图片业务演示](/docs/demo/ScreenShot_2026-07-29_161521_924.png)
+![普通用户真实图片业务演示](/docs/demo/ScreenShot_2026-07-29_161542_502.png)
 演示展示普通用户的真实业务提交、RAG、Qwen 文本生成、WAN 图片生成、MySQL 事务写入、创作记录与详情回看。该生产图片链路不接入 Round 17C text Skill Agent，DeepSeek Judge 调用为 0。
 
 ### 文本 Skill Agent 演示
