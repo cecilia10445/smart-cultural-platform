@@ -1,0 +1,387 @@
+"""Domain contracts for the collaborative cultural-design dialogue MVP.
+
+This module deliberately contains no model/provider integration.  It defines
+the controlled state machine and the API projection boundary used by round one.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from enum import Enum
+from typing import Any, Literal, Mapping
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+SCHEMA_VERSION = "agent-session-detail-v1"
+
+
+class AgentSessionStatus(str, Enum):
+    CREATED = "created"
+    EXTRACTING_BRIEF = "extracting_brief"
+    WAITING_BRIEF_CONFIRMATION = "waiting_brief_confirmation"
+    GENERATING_PRODUCT_TEXT = "generating_product_text"
+    WAITING_TEXT_FEEDBACK = "waiting_text_feedback"
+    BUILDING_VISUAL_PROMPT = "building_visual_prompt"
+    WAITING_IMAGE_CONFIRMATION = "waiting_image_confirmation"
+    GENERATING_IMAGE = "generating_image"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AgentMessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class AgentStepStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+ALLOWED_TRANSITIONS: dict[AgentSessionStatus, set[AgentSessionStatus]] = {
+    AgentSessionStatus.CREATED: {AgentSessionStatus.EXTRACTING_BRIEF, AgentSessionStatus.FAILED},
+    AgentSessionStatus.EXTRACTING_BRIEF: {AgentSessionStatus.WAITING_BRIEF_CONFIRMATION, AgentSessionStatus.FAILED},
+    AgentSessionStatus.WAITING_BRIEF_CONFIRMATION: {AgentSessionStatus.EXTRACTING_BRIEF, AgentSessionStatus.GENERATING_PRODUCT_TEXT, AgentSessionStatus.FAILED},
+    AgentSessionStatus.GENERATING_PRODUCT_TEXT: {AgentSessionStatus.WAITING_TEXT_FEEDBACK, AgentSessionStatus.FAILED},
+    AgentSessionStatus.WAITING_TEXT_FEEDBACK: {AgentSessionStatus.GENERATING_PRODUCT_TEXT, AgentSessionStatus.BUILDING_VISUAL_PROMPT, AgentSessionStatus.FAILED},
+    AgentSessionStatus.BUILDING_VISUAL_PROMPT: {AgentSessionStatus.WAITING_IMAGE_CONFIRMATION, AgentSessionStatus.FAILED},
+    AgentSessionStatus.WAITING_IMAGE_CONFIRMATION: {AgentSessionStatus.GENERATING_IMAGE, AgentSessionStatus.FAILED},
+    AgentSessionStatus.GENERATING_IMAGE: {AgentSessionStatus.COMPLETED, AgentSessionStatus.FAILED},
+    AgentSessionStatus.COMPLETED: set(),
+    AgentSessionStatus.FAILED: set(),
+}
+
+
+class AgentDialogueError(RuntimeError):
+    code = "AGENT_DIALOGUE_ERROR"
+    status_code = 500
+    retryable = False
+
+    def __init__(self, message: str | None = None):
+        self.message = message or self.code
+        super().__init__(self.message)
+
+
+class AgentSessionNotFound(AgentDialogueError):
+    code = "AGENT_SESSION_NOT_FOUND"
+    status_code = 404
+    message = "Agent session was not found."
+
+
+class AgentSessionStateConflict(AgentDialogueError):
+    code = "SESSION_STATE_CONFLICT"
+    status_code = 409
+    message = "Agent session is not in the expected state."
+
+
+class AgentSessionVersionConflict(AgentDialogueError):
+    code = "SESSION_VERSION_CONFLICT"
+    status_code = 409
+    message = "Agent session was changed by another request."
+
+
+class AgentInvalidTransition(AgentDialogueError):
+    code = "INVALID_SESSION_TRANSITION"
+    status_code = 409
+    message = "Requested session transition is not allowed."
+
+
+class AgentDecisionNotSupported(AgentDialogueError):
+    code = "AGENT_DECISION_NOT_SUPPORTED"
+    status_code = 409
+    message = "Agent decisions are not available in this implementation round."
+
+
+class AgentPersistenceUnavailable(AgentDialogueError):
+    code = "AGENT_PERSISTENCE_UNAVAILABLE"
+    status_code = 503
+    retryable = True
+    message = "Agent session data service is temporarily unavailable."
+
+
+class CreateAgentSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AppendAgentMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_turn_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=4000)
+    expected_status: AgentSessionStatus | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class AgentDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_id: str = Field(min_length=1, max_length=128)
+    decision: str = Field(min_length=1, max_length=64)
+    expected_status: AgentSessionStatus
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class AgentMessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    sequence_no: int = Field(ge=1)
+    role: AgentMessageRole
+    message_type: str
+    text: str
+    created_at: str
+
+
+class AgentStepErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str | None = None
+    retryable: bool = False
+    stage: str | None = None
+
+
+class AgentStepResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    ordinal: int = Field(ge=1)
+    stage: str
+    status: str
+    summary: str
+    tool: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: AgentStepErrorResponse | None = None
+
+
+class BriefSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cultural_theme: str | None = None
+    product_type: str | None = None
+    use_case: str | None = None
+    style: str | None = None
+    design_constraints: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+
+
+class ProductDesignResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_name: str | None = None
+    design_concept: str | None = None
+    cultural_translation: str | None = None
+    structure: str | None = None
+    materials: str | None = None
+    color_plan: str | None = None
+    usage_scene: str | None = None
+    selling_points: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class VisualDirectionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str | None = None
+    selected_visual_skill: str | None = None
+    positive_prompt_summary: str | None = None
+    negative_constraints: list[str] = Field(default_factory=list)
+    presentation_mode: str | None = None
+
+
+class FinalResultResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generation_log_id: int | None = None
+    product_name: str | None = None
+    image_url: str | None = None
+    generation_time: float | None = None
+    evidence_status: str | None = None
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str | None = None
+    retryable: bool = False
+    stage: str | None = None
+
+
+class AgentSessionDetailResponse(BaseModel):
+    """Stable, owner-scoped DTO.  Its shape never varies by state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[SCHEMA_VERSION] = SCHEMA_VERSION
+    session_id: str
+    status: AgentSessionStatus
+    current_stage: AgentSessionStatus
+    revision_count: int = Field(ge=0, le=4)
+    generation_log_id: int | None = None
+    brief_summary: BriefSummaryResponse | None = None
+    product_design: ProductDesignResponse | None = None
+    visual_direction: VisualDirectionResponse | None = None
+    final_result: FinalResultResponse | None = None
+    messages: list[AgentMessageResponse] = Field(default_factory=list)
+    steps: list[AgentStepResponse] = Field(default_factory=list)
+    error: AgentErrorResponse | None = None
+    created_at: str
+    updated_at: str
+
+
+class AgentSessionEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"] = "success"
+    request_id: str
+    data: AgentSessionDetailResponse
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (str, bytes)):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _text_list(value: Any) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _object_list(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _iso(value: Any) -> str:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value if isinstance(value, str) else ""
+
+
+def _status(value: Any) -> AgentSessionStatus:
+    try:
+        return AgentSessionStatus(value)
+    except (TypeError, ValueError):
+        return AgentSessionStatus.CREATED
+
+
+def _brief_projection(value: Any) -> BriefSummaryResponse | None:
+    raw = _json_object(value)
+    if not raw:
+        return None
+    return BriefSummaryResponse(
+        cultural_theme=_text(raw.get("cultural_theme") or raw.get("cultural_source")),
+        product_type=_text(raw.get("product_type")),
+        use_case=_text(raw.get("use_case")),
+        style=_text(raw.get("style")),
+        design_constraints=_text_list(raw.get("design_constraints")),
+        assumptions=_text_list(raw.get("assumptions")),
+    )
+
+
+def _design_projection(value: Any) -> ProductDesignResponse | None:
+    raw = _json_object(value)
+    if not raw:
+        return None
+    return ProductDesignResponse(
+        product_name=_text(raw.get("product_name")),
+        design_concept=_text(raw.get("design_concept")),
+        cultural_translation=_text(raw.get("cultural_translation")),
+        structure=_text(raw.get("structure")),
+        materials=_text(raw.get("materials")),
+        color_plan=_text(raw.get("color_plan")),
+        usage_scene=_text(raw.get("usage_scene")),
+        selling_points=_text_list(raw.get("selling_points")),
+        evidence=_object_list(raw.get("evidence")),
+    )
+
+
+def _visual_projection(value: Any) -> VisualDirectionResponse | None:
+    raw = _json_object(value)
+    if not raw:
+        return None
+    return VisualDirectionResponse(
+        summary=_text(raw.get("summary")),
+        selected_visual_skill=_text(raw.get("selected_visual_skill")),
+        positive_prompt_summary=_text(raw.get("positive_prompt_summary")),
+        negative_constraints=_text_list(raw.get("negative_constraints")),
+        presentation_mode=_text(raw.get("presentation_mode")),
+    )
+
+
+def _error_projection(value: Any, error_code: Any, failure_stage: Any) -> AgentErrorResponse | None:
+    raw = _json_object(value)
+    code = _text(raw.get("code")) or _text(error_code)
+    if not code:
+        return None
+    return AgentErrorResponse(
+        code=code,
+        message=_text(raw.get("message")),
+        retryable=raw.get("retryable") is True,
+        stage=_text(raw.get("stage")) or _text(failure_stage),
+    )
+
+
+def project_agent_session_detail(
+    session_row: Mapping[str, Any],
+    message_rows: list[Mapping[str, Any]] | None = None,
+    step_rows: list[Mapping[str, Any]] | None = None,
+) -> AgentSessionDetailResponse:
+    """Allow-list database rows into the stable public response model."""
+    messages = [
+        AgentMessageResponse(
+            id=str(row.get("id", "")), sequence_no=max(int(row.get("sequence_no") or 1), 1),
+            role=AgentMessageRole(row.get("role") if row.get("role") in {item.value for item in AgentMessageRole} else "system"),
+            message_type=_text(row.get("message_type")) or "system", text=_text(row.get("content_text")) or "",
+            created_at=_iso(row.get("created_at")),
+        )
+        for row in (message_rows or [])
+    ]
+    steps: list[AgentStepResponse] = []
+    for row in step_rows or []:
+        raw_error = _error_projection(row.get("error_json"), row.get("error_code"), row.get("stage"))
+        output = _json_object(row.get("output_summary_json"))
+        result = _json_object(row.get("tool_result_summary_json"))
+        steps.append(AgentStepResponse(
+            id=str(row.get("id", "")), ordinal=max(int(row.get("ordinal") or 1), 1),
+            stage=_text(row.get("stage")) or "unknown", status=_text(row.get("status")) or "unknown",
+            summary=_text(output.get("summary")) or _text(result.get("summary")) or "",
+            tool=_text(row.get("tool_name")), started_at=_iso(row.get("started_at")) or None,
+            finished_at=_iso(row.get("finished_at")) or None,
+            error=raw_error.model_dump() if raw_error is not None else None,
+        ))
+    generation_log_id = session_row.get("generation_log_id")
+    try:
+        generation_log_id = int(generation_log_id) if generation_log_id is not None else None
+    except (TypeError, ValueError):
+        generation_log_id = None
+    return AgentSessionDetailResponse(
+        session_id=str(session_row.get("id", "")), status=_status(session_row.get("status")),
+        current_stage=_status(session_row.get("current_stage")),
+        revision_count=min(max(int(session_row.get("text_revision_count") or 0), 0), 4),
+        generation_log_id=generation_log_id, brief_summary=_brief_projection(session_row.get("brief_json")),
+        product_design=_design_projection(session_row.get("confirmed_text_json")),
+        visual_direction=_visual_projection(session_row.get("image_prompt_json")), final_result=None,
+        messages=messages, steps=steps,
+        error=_error_projection(session_row.get("error_json"), session_row.get("error_code"), session_row.get("failure_stage")),
+        created_at=_iso(session_row.get("created_at")), updated_at=_iso(session_row.get("updated_at")),
+    )
