@@ -428,3 +428,118 @@ class AgentDialogueRepository:
             if cursor.rowcount != 1:
                 raise AgentSessionVersionConflict()
         return False
+
+    def finish_visual_prompt(self, session_id: str, user_id: str, *, package: dict[str, Any], summary: str, step_id: str) -> None:
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            if session.get("status") != AgentSessionStatus.BUILDING_VISUAL_PROMPT.value:
+                raise AgentSessionStateConflict()
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at)
+                VALUES (%s,%s,%s,'assistant','visual_direction',%s,NULL,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, summary, now),
+            )
+            cursor.execute("UPDATE agent_steps SET status='completed',output_summary_json=%s,finished_at=%s WHERE id=%s AND session_id=%s",
+                           (self._json({"summary": "Visual direction ready"}), now, step_id, session_id))
+            cursor.execute(
+                """UPDATE agent_sessions SET image_prompt_json=%s,status=%s,current_stage=%s,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (self._json(package), AgentSessionStatus.WAITING_IMAGE_CONFIRMATION.value,
+                 AgentSessionStatus.WAITING_IMAGE_CONFIRMATION.value, now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+
+    def confirm_image_generation(self, session_id: str, user_id: str, decision_id: str, expected_version: int | None) -> bool:
+        """Atomically claim the only allowed final image generation for a session."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT id FROM agent_messages WHERE session_id=%s AND decision_id=%s LIMIT 1", (session_id, decision_id))
+            if self._fetchone(cursor) is not None:
+                return True
+            self._check_expected(session, AgentSessionStatus.WAITING_IMAGE_CONFIRMATION, expected_version)
+            if not session.get("image_prompt_json"):
+                raise AgentSessionStateConflict()
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,decision_id,created_at)
+                VALUES (%s,%s,%s,'assistant','decision_receipt',%s,%s,%s,%s)""",
+                (str(uuid.uuid4()), session_id, sequence,
+                 "视觉方向已确认，正在生成最终产品图片。",
+                 self._json({"decision": "confirm_image_generation", "outcome": "started"}), decision_id, now),
+            )
+            cursor.execute(
+                """UPDATE agent_sessions SET status=%s,current_stage=%s,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (AgentSessionStatus.GENERATING_IMAGE.value, AgentSessionStatus.GENERATING_IMAGE.value,
+                 now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+        return False
+
+    def finish_image_generation(
+        self, session_id: str, user_id: str, *, step_id: str, image_url: str, response_payload: dict[str, Any],
+        brief: dict[str, Any], title: str, content: str, generation_time: float,
+    ) -> int:
+        """Persist one Agent history row, bind it, and complete the session in one transaction."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            if session.get("status") != AgentSessionStatus.GENERATING_IMAGE.value or session.get("generation_log_id") is not None:
+                raise AgentSessionStateConflict()
+            cursor.execute(
+                """INSERT INTO generation_logs
+                (user_id,event_type,timestamp,prompt,style,image_url,title,content,generation_time,content_length,
+                 user_rating,download_count,user_age,user_gender,login_time,data_origin,generation_kind,
+                 prompt_template_version,brief_json,response_json)
+                VALUES (%s,'generate',%s,%s,%s,%s,%s,%s,%s,%s,NULL,0,NULL,NULL,NULL,'production',
+                        'agent_dialogue_mvp','agent-dialogue-mvp-v1',%s,%s)""",
+                (user_id, now, title, "agent-dialogue", image_url, title, content, generation_time, len(content),
+                 self._json(brief), self._json(response_payload)),
+            )
+            log_id = int(cursor.lastrowid)
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at)
+                VALUES (%s,%s,%s,'assistant','final_result',%s,NULL,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, "最终图片已生成并保存到创作记录。", now),
+            )
+            cursor.execute(
+                """UPDATE agent_steps SET status='completed',output_summary_json=%s,finished_at=%s
+                WHERE id=%s AND session_id=%s""", (self._json({"summary": "Final image generated and persisted", "log_id": log_id}), now, step_id, session_id)
+            )
+            cursor.execute(
+                """UPDATE agent_sessions SET generation_log_id=%s,context_summary_json=%s,status=%s,current_stage=%s,
+                completed_at=%s,error_json=NULL,error_code=NULL,failure_stage=NULL,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (log_id, self._json({"final_result": response_payload}), AgentSessionStatus.COMPLETED.value,
+                 AgentSessionStatus.COMPLETED.value, now, now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+        return log_id
+
+    def record_image_persistence_failure(self, session_id: str, user_id: str, *, step_id: str, error: dict[str, Any], image_url: str | None = None) -> None:
+        """Keep a locally persisted artifact discoverable without ever re-running the provider automatically."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            if session.get("status") != AgentSessionStatus.GENERATING_IMAGE.value:
+                raise AgentSessionStateConflict()
+            cursor.execute("UPDATE agent_steps SET status='failed',error_json=%s,error_code=%s,finished_at=%s WHERE id=%s AND session_id=%s",
+                           (self._json(error), error.get("code"), now, step_id, session_id))
+            cursor.execute(
+                """UPDATE agent_sessions SET context_summary_json=%s,status='failed',current_stage='failed',failure_stage='generating_image',
+                error_json=%s,error_code=%s,version=version+1,updated_at=%s WHERE id=%s AND user_id=%s AND version=%s""",
+                (self._json({"orphaned_image_url": image_url} if image_url else {}), self._json(error), error.get("code"), now,
+                 session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()

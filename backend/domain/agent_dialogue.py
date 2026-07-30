@@ -144,6 +144,20 @@ class ProductTextOutputInvalid(AgentDialogueError):
     message = "The product design text could not be validated."
 
 
+class AgentImageGenerationFailed(AgentDialogueError):
+    code = "AGENT_IMAGE_GENERATION_FAILED"
+    status_code = 502
+    retryable = True
+    message = "The final product image could not be generated."
+
+
+class AgentImagePersistenceFailed(AgentDialogueError):
+    code = "AGENT_IMAGE_PERSISTENCE_FAILED"
+    status_code = 503
+    retryable = False
+    message = "The generated image is awaiting a recoverable persistence step."
+
+
 class TextRevisionLimitReached(AgentDialogueError):
     code = "TEXT_REVISION_LIMIT_REACHED"
     status_code = 409
@@ -223,6 +237,26 @@ class ProductDesignDraft(BaseModel):
     revision_summary: str | None = Field(default=None, max_length=1000)
 
 
+class ImagePromptPackage(BaseModel):
+    """Validated, internal-only image instruction package for an Agent session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    positive_prompt: str = Field(min_length=1, max_length=6000)
+    negative_prompt: str = Field(min_length=1, max_length=3000)
+    required_constraints: list[str] = Field(default_factory=list)
+    product_form: str = Field(min_length=1, max_length=2000)
+    materials: str = Field(min_length=1, max_length=2000)
+    color_plan: str = Field(min_length=1, max_length=1000)
+    composition: str = Field(min_length=1, max_length=1000)
+    scene: str = Field(min_length=1, max_length=1000)
+    avoid: list[str] = Field(default_factory=list)
+    presentation_mode: str = Field(min_length=1, max_length=64)
+    selected_visual_skill: str | None = None
+    evidence_source_ids: list[str] = Field(default_factory=list)
+    user_facing_direction: str = Field(min_length=1, max_length=2000)
+
+
 class AgentMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -296,6 +330,12 @@ class VisualDirectionResponse(BaseModel):
     positive_prompt_summary: str | None = None
     negative_constraints: list[str] = Field(default_factory=list)
     presentation_mode: str | None = None
+    product_form: str | None = None
+    materials: str | None = None
+    color_plan: str | None = None
+    composition: str | None = None
+    scene: str | None = None
+    avoid: list[str] = Field(default_factory=list)
 
 
 class FinalResultResponse(BaseModel):
@@ -307,6 +347,8 @@ class FinalResultResponse(BaseModel):
     generation_time: float | None = None
     evidence_status: str | None = None
     citations: list[dict[str, Any]] = Field(default_factory=list)
+    selected_text_skill: str | None = None
+    selected_visual_skill: str | None = None
 
 
 class AgentErrorResponse(BaseModel):
@@ -430,11 +472,17 @@ def _visual_projection(value: Any) -> VisualDirectionResponse | None:
     if not raw:
         return None
     return VisualDirectionResponse(
-        summary=_text(raw.get("summary")),
+        summary=_text(raw.get("summary")) or _text(raw.get("user_facing_direction")),
         selected_visual_skill=_text(raw.get("selected_visual_skill")),
-        positive_prompt_summary=_text(raw.get("positive_prompt_summary")),
-        negative_constraints=_text_list(raw.get("negative_constraints")),
+        positive_prompt_summary=_text(raw.get("positive_prompt_summary")) or _text(raw.get("product_form")),
+        negative_constraints=_text_list(raw.get("negative_constraints") or raw.get("required_constraints")),
         presentation_mode=_text(raw.get("presentation_mode")),
+        product_form=_text(raw.get("product_form")),
+        materials=_text(raw.get("materials")),
+        color_plan=_text(raw.get("color_plan")),
+        composition=_text(raw.get("composition")),
+        scene=_text(raw.get("scene")),
+        avoid=_text_list(raw.get("avoid")),
     )
 
 
@@ -448,6 +496,23 @@ def _error_projection(value: Any, error_code: Any, failure_stage: Any) -> AgentE
         message=_text(raw.get("message")),
         retryable=raw.get("retryable") is True,
         stage=_text(raw.get("stage")) or _text(failure_stage),
+    )
+
+
+def _final_projection(value: Any, generation_log_id: int | None) -> FinalResultResponse | None:
+    raw = _json_object(value)
+    result = _json_object(raw.get("final_result"))
+    if not result and generation_log_id is None:
+        return None
+    return FinalResultResponse(
+        generation_log_id=generation_log_id,
+        product_name=_text(result.get("product_name")),
+        image_url=_text(result.get("image_url")),
+        generation_time=(float(result["generation_time"]) if isinstance(result.get("generation_time"), (int, float)) else None),
+        evidence_status=_text(result.get("evidence_status")),
+        citations=_object_list(result.get("citations")),
+        selected_text_skill=_text(result.get("selected_text_skill")),
+        selected_visual_skill=_text(result.get("selected_visual_skill")),
     )
 
 
@@ -490,7 +555,8 @@ def project_agent_session_detail(
         revision_count=min(max(int(session_row.get("text_revision_count") or 0), 0), 4),
         generation_log_id=generation_log_id, brief_summary=_brief_projection(session_row.get("brief_json")),
         product_design=_design_projection(session_row.get("confirmed_text_json")),
-        visual_direction=_visual_projection(session_row.get("image_prompt_json")), final_result=None,
+        visual_direction=_visual_projection(session_row.get("image_prompt_json")),
+        final_result=_final_projection(session_row.get("context_summary_json"), generation_log_id),
         messages=messages, steps=steps,
         error=_error_projection(session_row.get("error_json"), session_row.get("error_code"), session_row.get("failure_stage")),
         created_at=_iso(session_row.get("created_at")), updated_at=_iso(session_row.get("updated_at")),

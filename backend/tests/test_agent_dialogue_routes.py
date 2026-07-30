@@ -165,3 +165,16 @@ def test_product_design_projection_allow_lists_complete_agent_text_contract():
         "creative_origin": "纹样", "factual_background": "创意解读", "evidence_status": "creative_only", "evidence": [],
         "used_source_ids": [], "selected_text_skill": "retail-product-copy", "revision_summary": "调整材质",
     }
+
+
+def test_visual_direction_projection_never_leaks_prompt_payload():
+    row = {"id": "session-1", "status": "waiting_image_confirmation", "current_stage": "waiting_image_confirmation",
+           "text_revision_count": 0, "generation_log_id": None, "brief_json": None, "confirmed_text_json": None,
+           "error_json": None, "error_code": None, "failure_stage": None, "created_at": datetime(2026, 7, 30, 12), "updated_at": datetime(2026, 7, 30, 12),
+           "image_prompt_json": {"positive_prompt": "private prompt", "negative_prompt": "private negative", "required_constraints": ["完整产品"],
+               "product_form": "环形结构", "materials": "磨砂金属", "color_plan": "暖白", "composition": "主视图", "scene": "桌面",
+               "avoid": ["人物"], "presentation_mode": "single_hero", "selected_visual_skill": "commercial-product-presentation",
+               "evidence_source_ids": ["met-1"], "user_facing_direction": "现代产品主视图", "provider_payload": {"secret": "never"}}}
+    visual = project_agent_session_detail(row, [], []).visual_direction.model_dump()
+    assert visual["summary"] == "现代产品主视图" and visual["materials"] == "磨砂金属"
+    assert "positive_prompt" not in visual and "negative_prompt" not in visual and "provider_payload" not in visual

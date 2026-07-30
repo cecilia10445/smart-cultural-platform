@@ -5,10 +5,11 @@ import pytest
 
 from backend.domain.agent_dialogue import (
     AgentDecisionNotSupported, AgentInvalidTransition, AgentSessionStateConflict,
-    AgentSessionStatus, AgentSessionVersionConflict, ProductDesignDraft, ProductTextModelTimeout,
+    AgentSessionStatus, AgentSessionVersionConflict, ImagePromptPackage, ProductDesignDraft, ProductTextModelTimeout,
 )
 from backend.services.agent_dialogue_service import AgentDialogueService
 from backend.services.agent_brief_agent import BriefAgent
+from backend.services.aigc_service import AIGCServiceError
 
 
 def proposal(_prompt):
@@ -127,6 +128,39 @@ class MemoryRepository:
         row.update(status="building_visual_prompt", current_stage="building_visual_prompt", version=row["version"] + 1, updated_at=self._now())
         return False
 
+    def finish_visual_prompt(self, session_id, user_id, *, package, summary, step_id):
+        row = self._row(session_id, user_id)
+        self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1,
+                                          "role": "assistant", "message_type": "visual_direction", "content_text": summary, "created_at": self._now()})
+        next(item for item in self.steps[session_id] if item["id"] == step_id).update(status="completed", output_summary_json={"summary": "Visual direction ready"})
+        row.update(image_prompt_json=package, status="waiting_image_confirmation", current_stage="waiting_image_confirmation", version=row["version"] + 1, updated_at=self._now())
+
+    def confirm_image_generation(self, session_id, user_id, decision_id, expected_version):
+        row = self._row(session_id, user_id)
+        if any(item.get("decision_id") == decision_id for item in self.messages[session_id]): return True
+        if row["status"] != "waiting_image_confirmation": raise AgentSessionStateConflict()
+        self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1,
+                                          "role": "assistant", "message_type": "decision_receipt", "content_text": "视觉方向已确认，正在生成最终产品图片。",
+                                          "decision_id": decision_id, "created_at": self._now()})
+        row.update(status="generating_image", current_stage="generating_image", version=row["version"] + 1, updated_at=self._now())
+        return False
+
+    def finish_image_generation(self, session_id, user_id, *, step_id, image_url, response_payload, brief, title, content, generation_time):
+        row = self._row(session_id, user_id)
+        if row["status"] != "generating_image" or row.get("generation_log_id") is not None:
+            raise AgentSessionStateConflict()
+        log_id = 800 + len(self.sessions)
+        self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1,
+                                          "role": "assistant", "message_type": "final_result", "content_text": "最终图片已生成并保存到创作记录。", "created_at": self._now()})
+        next(item for item in self.steps[session_id] if item["id"] == step_id).update(status="completed", output_summary_json={"summary": "Final image generated and persisted", "log_id": log_id})
+        row.update(generation_log_id=log_id, context_summary_json={"final_result": response_payload}, status="completed", current_stage="completed", version=row["version"] + 1, updated_at=self._now())
+        return log_id
+
+    def record_image_persistence_failure(self, session_id, user_id, *, step_id, error, image_url=None):
+        row = self._row(session_id, user_id)
+        next(item for item in self.steps[session_id] if item["id"] == step_id).update(status="failed", error_json=error, error_code=error["code"])
+        row.update(status="failed", current_stage="failed", failure_stage="generating_image", error_json=error, error_code=error["code"], context_summary_json={"orphaned_image_url": image_url} if image_url else {}, version=row["version"] + 1, updated_at=self._now())
+
     def transition(self, session_id, user_id, target, expected_status, expected_version):
         row = self._row(session_id, user_id)
         if expected_status and row["status"] != expected_status.value:
@@ -184,9 +218,38 @@ class FakeProductTextService:
         return ProductDesignDraft.model_validate(result)
 
 
+def fake_visual_builder(brief, design, evidence, skill):
+    return ImagePromptPackage(
+        positive_prompt=f"{design['product_name']}；{design['materials']}；{brief['presentation_mode']}", negative_prompt="人物，文字",
+        required_constraints=["完整产品"], product_form=design["structure"], materials=design["materials"],
+        color_plan=design["color_plan"], composition=brief["visual_direction"]["composition"], scene=design["usage_scene"],
+        avoid=["人物", "文字"], presentation_mode=brief["presentation_mode"], selected_visual_skill=skill["skill_id"],
+        evidence_source_ids=[item["source_id"] for item in evidence], user_facing_direction="以现代产品主视图呈现材质和结构。",
+    )
+
+
+def fake_visual_skill(_brief, _design):
+    return {"skill_id": "commercial-product-presentation", "version": "1.0.0", "instruction": "test", "fallback": False}
+
+
+class FakeImageGenerationService:
+    def __init__(self): self.calls = 0
+
+    def generate(self, _package):
+        self.calls += 1
+        return {"image_url": "/static/images/agent-test.png"}
+
+
+def ready_for_image(service):
+    created = service.create_session("U1")
+    service.append_message(created.session_id, "U1", text="设计现代桌面灯", client_turn_id="brief")
+    service.submit_decision(created.session_id, "U1", decision_id="confirm-brief", decision="confirm_brief", expected_status=AgentSessionStatus.WAITING_BRIEF_CONFIRMATION)
+    return service.submit_decision(created.session_id, "U1", decision_id="confirm-text", decision="confirm_product_text", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+
+
 @pytest.fixture()
 def service():
-    return AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), FakeProductTextService())
+    return AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), FakeProductTextService(), fake_visual_builder, fake_visual_skill, FakeImageGenerationService())
 
 
 def test_session_message_idempotency_owner_scope_and_sequence(service):
@@ -252,7 +315,12 @@ def test_product_text_revision_limit_and_confirmation(service):
         service.append_message(created.session_id, "U1", text="再改一次", client_turn_id="revision-5", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
     assert getattr(limited.value, "code", None) == "TEXT_REVISION_LIMIT_REACHED"
     confirmed = service.submit_decision(created.session_id, "U1", decision_id="confirm-text", decision="confirm_product_text", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
-    assert confirmed.status is AgentSessionStatus.BUILDING_VISUAL_PROMPT
+    assert confirmed.status is AgentSessionStatus.WAITING_IMAGE_CONFIRMATION
+    assert confirmed.visual_direction is not None
+    image = service.submit_decision(created.session_id, "U1", decision_id="confirm-image", decision="confirm_image_generation", expected_status=AgentSessionStatus.WAITING_IMAGE_CONFIRMATION)
+    replay = service.submit_decision(created.session_id, "U1", decision_id="confirm-image", decision="confirm_image_generation", expected_status=AgentSessionStatus.WAITING_IMAGE_CONFIRMATION)
+    assert image.status is AgentSessionStatus.COMPLETED and image.generation_log_id is not None
+    assert replay.status is AgentSessionStatus.COMPLETED and len(replay.messages) == len(image.messages)
 
 
 def test_failed_revision_keeps_last_valid_design_and_does_not_increment_count():
@@ -271,3 +339,30 @@ def test_failed_revision_keeps_last_valid_design_and_does_not_increment_count():
     assert restored.status is AgentSessionStatus.WAITING_TEXT_FEEDBACK
     assert restored.revision_count == 0 and restored.product_design == original.product_design
     assert restored.steps[-1].status == "failed" and restored.error.code == "PRODUCT_TEXT_MODEL_TIMEOUT"
+
+
+def test_final_image_decision_is_idempotent_and_writes_one_log():
+    image = FakeImageGenerationService()
+    service = AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), FakeProductTextService(), fake_visual_builder, fake_visual_skill, image)
+    prepared = ready_for_image(service)
+    completed = service.submit_decision(prepared.session_id, "U1", decision_id="image-once", decision="confirm_image_generation", expected_status=AgentSessionStatus.WAITING_IMAGE_CONFIRMATION)
+    replay = service.submit_decision(prepared.session_id, "U1", decision_id="image-once", decision="confirm_image_generation", expected_status=AgentSessionStatus.WAITING_IMAGE_CONFIRMATION)
+    assert completed.status is AgentSessionStatus.COMPLETED and completed.final_result.image_url.endswith("agent-test.png")
+    assert replay.generation_log_id == completed.generation_log_id and image.calls == 1
+
+
+def test_image_provider_failure_marks_failed_without_a_second_attempt():
+    class UnavailableImage:
+        calls = 0
+        def generate(self, _package):
+            self.calls += 1
+            raise AIGCServiceError("MODEL_REQUEST_FAILED", "unavailable", retryable=True)
+
+    image = UnavailableImage()
+    service = AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), FakeProductTextService(), fake_visual_builder, fake_visual_skill, image)
+    prepared = ready_for_image(service)
+    with pytest.raises(Exception) as raised:
+        service.submit_decision(prepared.session_id, "U1", decision_id="image-fail", decision="confirm_image_generation", expected_status=AgentSessionStatus.WAITING_IMAGE_CONFIRMATION)
+    assert getattr(raised.value, "code", None) == "AGENT_IMAGE_GENERATION_FAILED"
+    failed = service.get_session(prepared.session_id, "U1")
+    assert failed.status is AgentSessionStatus.FAILED and failed.error.code == "AGENT_IMAGE_GENERATION_FAILED" and image.calls == 1

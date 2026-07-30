@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from backend.domain.agent_dialogue import (
@@ -14,12 +15,17 @@ from backend.domain.agent_dialogue import (
     AgentSessionStatus,
     BriefOutputInvalid,
     ProductTextOutputInvalid,
+    AgentImageGenerationFailed,
+    AgentImagePersistenceFailed,
     TextRevisionLimitReached,
     project_agent_session_detail,
 )
 from backend.services.agent_dialogue_repository import AgentDialogueRepository
 from backend.services.agent_brief_agent import BriefAgent
 from backend.services.agent_product_text import ProductTextService
+from backend.services.agent_visual_prompt import build_image_prompt_package, load_visual_skill
+from backend.services.agent_image_generation import AgentImageGenerationService
+from backend.services.aigc_service import AIGCServiceError
 
 
 class AgentDialogueService:
@@ -27,11 +33,15 @@ class AgentDialogueService:
 
     def __init__(
         self, repository: AgentDialogueRepository, brief_agent: BriefAgent | None = None,
-        product_text_service: ProductTextService | None = None,
+        product_text_service: ProductTextService | None = None, visual_prompt_builder=build_image_prompt_package,
+        visual_skill_loader=load_visual_skill, image_generation_service: AgentImageGenerationService | None = None,
     ):
         self.repository = repository
         self.brief_agent = brief_agent or BriefAgent()
         self.product_text_service = product_text_service or ProductTextService()
+        self.visual_prompt_builder = visual_prompt_builder
+        self.visual_skill_loader = visual_skill_loader
+        self.image_generation_service = image_generation_service or AgentImageGenerationService()
 
     def _detail(self, session_id: str, user_id: str) -> AgentSessionDetailResponse:
         session, messages, steps = self.repository.get_detail_rows(session_id, user_id)
@@ -173,6 +183,40 @@ class AgentDialogueService:
                 self.repository.mark_failed(session_id, user_id, error_code=code, error=stable)
             raise error if hasattr(error, "code") else ProductTextOutputInvalid() from error
 
+    def _build_visual_prompt(self, session_id: str, user_id: str) -> None:
+        """Load one visual Skill and build a package outside persistence transactions."""
+        session = self.repository.get_session(session_id, user_id)
+        brief_record = self._json_object(session.get("brief_json"))
+        brief = self._json_object(brief_record.get("normalized_brief"))
+        design = self._json_object(session.get("confirmed_text_json"))
+        if not brief or not design:
+            raise AgentSessionStateConflict()
+        skill_step = self.repository.append_step(
+            session_id, user_id, "building_visual_prompt", "running", tool_name="select_visual_skill",
+            input_summary={"summary": "Selecting visual design Skill"},
+        )
+        skill = self.visual_skill_loader(brief, design)
+        self.repository.finish_step(
+            session_id, user_id, skill_step["id"], {"summary": "Visual Skill selected"},
+            {"summary": "Visual Skill fallback" if skill.get("fallback") else "Visual Skill loaded", "skill_id": skill.get("skill_id")},
+        )
+        build_step = self.repository.append_step(
+            session_id, user_id, "building_visual_prompt", "running", tool_name="build_visual_prompt",
+            skill_id=skill.get("skill_id"), skill_version=skill.get("version"), input_summary={"summary": "Building visual direction"},
+        )
+        try:
+            package = self.visual_prompt_builder(brief, design, design.get("evidence", []), skill)
+            payload = package.model_dump()
+            self.repository.finish_visual_prompt(
+                session_id, user_id, package=payload, summary=package.user_facing_direction, step_id=build_step["id"],
+            )
+        except Exception as error:
+            stable = {"code": "VISUAL_PROMPT_OUTPUT_INVALID", "message": "Visual direction could not be prepared.",
+                      "retryable": False, "stage": "building_visual_prompt"}
+            self.repository.fail_step(session_id, user_id, build_step["id"], stable)
+            self.repository.mark_failed(session_id, user_id, error_code=stable["code"], error=stable)
+            raise ProductTextOutputInvalid() from error
+
     def append_step(self, session_id: str, user_id: str, **kwargs: Any) -> AgentSessionDetailResponse:
         self.repository.append_step(session_id, user_id, **kwargs)
         return self._detail(session_id, user_id)
@@ -215,8 +259,58 @@ class AgentDialogueService:
                 self._generate_product_text(session_id, user_id, feedback=None, is_revision=False)
             return self._detail(session_id, user_id)
         if decision == "confirm_product_text":
-            self.repository.confirm_product_text(session_id, user_id, decision_id, expected_version)
+            replayed = self.repository.confirm_product_text(session_id, user_id, decision_id, expected_version)
+            if not replayed:
+                self._build_visual_prompt(session_id, user_id)
+            return self._detail(session_id, user_id)
+        if decision == "confirm_image_generation":
+            replayed = self.repository.confirm_image_generation(session_id, user_id, decision_id, expected_version)
+            if not replayed:
+                self._generate_final_image(session_id, user_id)
             return self._detail(session_id, user_id)
         else:
             self.repository.record_unsupported_decision(session_id, user_id, decision_id, decision, expected_status, expected_version)
             raise AgentDecisionNotSupported()
+
+    def _generate_final_image(self, session_id: str, user_id: str) -> None:
+        """Provider work occurs after the claim transaction, never inside it."""
+        session = self.repository.get_session(session_id, user_id)
+        brief_record = self._json_object(session.get("brief_json"))
+        brief = self._json_object(brief_record.get("normalized_brief"))
+        design = self._json_object(session.get("confirmed_text_json"))
+        package = self._json_object(session.get("image_prompt_json"))
+        if not brief or not design or not package:
+            raise AgentSessionStateConflict()
+        step = self.repository.append_step(session_id, user_id, "generating_image", "running", tool_name="generate_product_image",
+                                           skill_id=package.get("selected_visual_skill"), input_summary={"summary": "Generating confirmed final image"})
+        started = time.perf_counter()
+        image_url = None
+        try:
+            generated = self.image_generation_service.generate(package)
+            image_url = generated.get("image_url") if isinstance(generated, dict) else None
+            if not isinstance(image_url, str) or not image_url:
+                raise ValueError("IMAGE_RESULT_INVALID")
+            generation_time = round(time.perf_counter() - started, 2)
+            title = str(design.get("product_name") or brief.get("product_type") or "文创产品")[:255]
+            content = self._product_summary(design)
+            final_payload = {
+                "agent_session_id": session_id, "product_name": title, "image_url": image_url,
+                "generation_time": generation_time, "evidence_status": design.get("evidence_status"),
+                "used_source_ids": [item for item in design.get("used_source_ids", []) if isinstance(item, str)],
+                "selected_text_skill": design.get("selected_text_skill"), "selected_visual_skill": package.get("selected_visual_skill"),
+                "product_design_summary": content[:4000],
+                "visual_direction": {key: package.get(key) for key in ("product_form", "materials", "color_plan", "composition", "scene", "presentation_mode")},
+            }
+            self.repository.finish_image_generation(session_id, user_id, step_id=step["id"], image_url=image_url,
+                                                    response_payload=final_payload, brief=brief, title=title,
+                                                    content=content, generation_time=generation_time)
+        except AIGCServiceError as error:
+            stable = {"code": "AGENT_IMAGE_GENERATION_FAILED", "message": "Final image generation was unavailable.",
+                      "retryable": error.retryable, "stage": "generating_image"}
+            self.repository.record_image_persistence_failure(session_id, user_id, step_id=step["id"], error=stable)
+            raise AgentImageGenerationFailed() from error
+        except Exception as error:
+            stable = {"code": "AGENT_IMAGE_PERSISTENCE_FAILED", "message": "The generated image could not be finalized; it will not be generated again automatically.",
+                      "retryable": False, "stage": "generating_image"}
+            self.repository.record_image_persistence_failure(session_id, user_id, step_id=step["id"], error=stable, image_url=image_url)
+            raise AgentImagePersistenceFailed() from error
