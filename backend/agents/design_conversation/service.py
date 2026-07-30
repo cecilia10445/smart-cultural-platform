@@ -16,7 +16,7 @@ class DesignConversationService:
         self.state_reader = state_reader
         self.cultural_rag = cultural_rag
 
-    async def run_turn(self, user_id: str, session_id: str, user_input: str):
+    async def run_turn(self, user_id: str, session_id: str, user_input: str, context_payload: dict[str, Any] | None = None):
         state = self.state_reader(user_id, session_id)
         status = str(state.get("status", "created"))
         context = RuntimeContext(
@@ -27,5 +27,5 @@ class DesignConversationService:
         )
         return await self.runtime_engine.run(
             DESIGN_CONVERSATION_DEFINITION, context,
-            RuntimeInput(text=user_input, request_id=str(uuid.uuid4())),
+            RuntimeInput(text=user_input, request_id=str(uuid.uuid4()), context_payload=context_payload or {}),
         )

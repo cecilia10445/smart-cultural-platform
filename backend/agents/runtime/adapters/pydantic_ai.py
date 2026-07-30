@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
 import uuid
 from typing import Any
 
@@ -51,7 +52,7 @@ class PydanticAIRuntimeEngine:
         trace = TraceRecorder(run_id)
         results: list = []
         deps = _AdapterDeps(definition, context, self.executor, usage, ToolCallLedger(), trace, results)
-        trace.add("run_started", usage, input_summary={"request_id_present": bool(user_input.request_id), "text_length": len(user_input.text)})
+        trace.add("run_started", usage, input_summary={"request_id_present": bool(user_input.request_id), "text_length": len(user_input.text), "context_present": bool(user_input.context_payload)})
         toolset = self._toolset(definition, context)
         agent = Agent(
             self.model,
@@ -66,7 +67,7 @@ class PydanticAIRuntimeEngine:
         )
         try:
             result = await agent.run(
-                user_input.text,
+                self._model_prompt(user_input),
                 deps=deps,
                 usage_limits=UsageLimits(request_limit=definition.max_model_requests),
             )
@@ -121,6 +122,15 @@ class PydanticAIRuntimeEngine:
             return replace(tool_def, name=spec.name, description=spec.description,
                            parameters_json_schema=spec.input_model.model_json_schema(), sequential=True)
         return prepare
+
+    @staticmethod
+    def _model_prompt(user_input: RuntimeInput) -> str:
+        if not user_input.context_payload:
+            return user_input.text
+        # The current user text is also in the envelope, making the precedence
+        # relation explicit for function models and production providers alike.
+        return ("[PROJECT_CONVERSATION_CONTEXT]\n" + json.dumps(user_input.context_payload, ensure_ascii=False, sort_keys=True) +
+                "\n[/PROJECT_CONVERSATION_CONTEXT]\n[CURRENT_USER_INPUT]\n" + user_input.text + "\n[/CURRENT_USER_INPUT]")
 
     @staticmethod
     def _failed(run_id: str, usage: RuntimeUsage, trace: TraceRecorder, results: list, code: str, event: str) -> AgentRunResult:

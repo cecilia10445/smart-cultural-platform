@@ -86,6 +86,9 @@ class RuntimeInput(BaseModel):
 
     text: str = Field(min_length=1, max_length=12000)
     request_id: str = Field(min_length=1, max_length=128)
+    # Project-owned, serialisable context.  Adapters may render it for a model,
+    # but Pydantic AI objects never escape this contract.
+    context_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeUsage(BaseModel):
@@ -136,6 +139,7 @@ class AgentRunResult(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
     traces: list[TraceRecord] = Field(default_factory=list)
     usage: RuntimeUsage
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 Handler = Callable[[Any, BaseModel], BaseModel | dict[str, Any] | Awaitable[BaseModel | dict[str, Any]]]
