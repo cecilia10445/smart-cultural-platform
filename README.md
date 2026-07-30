@@ -4,16 +4,6 @@
 
 平台面向博物馆文创、文化 IP 衍生品、数字展陈与文化内容创作等场景。后端使用 FastAPI，在线生成结果以 MySQL `generation_logs` 为事实来源；协作式设计以独立持久会话和受控状态机组织，而不是通用自由聊天。
 
-## 项目预览
-
-[![普通用户文创生成演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
-
-普通用户工作区展示结构化快速生成、结果查看与创作记录。
-
-[![文本 Skill 工作流演示](docs/demo/smart-cultural-platform-demo-poster.png)](docs/demo/smart-cultural-platform-demo-1440p.webm)
-
-文本 Skill 工作流展示文化 evidence、受控 Skill 加载与结构化文本交付。协作式设计入口位于同一创作工作区，可在快速生成与协作式设计之间切换。
-
 ## 核心能力
 
 ### 快速生成
@@ -250,6 +240,16 @@ npm run test:e2e
 ```
 
 真实模型冒烟依赖有效环境变量、目标数据库与显式授权；它不应被 mock 测试替代，也不应在未授权时自动执行。
+
+## 项目预览
+![协作式设计文创生成演示](屏幕截图_30-7-2026_184046_192.168.48.133.jpeg)
+[![普通用户文创生成演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
+
+普通用户工作区展示结构化快速生成、结果查看与创作记录。
+
+[![文本 Skill 工作流演示](docs/demo/smart-cultural-platform-demo-poster.png)](docs/demo/smart-cultural-platform-demo-1440p.webm)
+
+文本 Skill 工作流展示文化 evidence、受控 Skill 加载与结构化文本交付。协作式设计入口位于同一创作工作区，可在快速生成与协作式设计之间切换。
 
 ## 演示流程
 
