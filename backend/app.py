@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routes.auth import router as auth_router
+from backend.routes.agent_dialogue import router as agent_dialogue_router
 from backend.routes.dashboard import router as dashboard_router
 from backend.routes.frontend import router as frontend_router
 from backend.routes.generation import router as generation_router
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     application.include_router(users_router)
     application.include_router(dashboard_router)
     application.include_router(generation_router)
+    application.include_router(agent_dialogue_router)
     application.include_router(frontend_router)
     return application
 

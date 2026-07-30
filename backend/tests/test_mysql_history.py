@@ -210,3 +210,25 @@ def test_text_skill_history_skips_malformed_audit_payload(monkeypatch):
         "user_age": None, "user_gender": None, "brief_json": "{}", "response_json": '{"run_id":"missing-output"}',
     }])
     assert service.get_user_history("A2001") == []
+
+
+def test_agent_history_uses_a_dedicated_allowlisted_record_type(monkeypatch):
+    service = MySQLService()
+    monkeypatch.setattr(service, "execute_query", lambda query, params: [{
+        "log_id": 73, "generation_kind": "agent_dialogue_mvp", "prompt_template_version": "agent-dialogue-mvp-v1",
+        "timestamp": datetime(2026, 7, 30, 12, 0, 0), "prompt": "灯", "style": "agent-dialogue", "image_url": "/static/images/image_agent.png",
+        "title": "三兔环光桌面灯", "content": "不得直接透传", "generation_time": 3.2, "content_length": 0,
+        "user_rating": None, "download_count": 0, "user_age": None, "user_gender": None, "brief_json": "{}",
+        "response_json": '{"agent_session_id":"session-73","product_name":"三兔环光桌面灯","image_url":"/static/images/image_agent.png",'
+            '"evidence_status":"creative_only","used_source_ids":["source-1"],"selected_text_skill":"retail-product-copy",'
+            '"selected_visual_skill":"heritage-motif-translation","product_design_summary":"安全摘要",'
+            '"visual_direction":{"product_form":"环形结构","provider_payload":"must-not-leak"},"secret":"must-not-leak"}',
+    }])
+
+    result = service.get_user_history("U1001")[0]
+
+    assert result["record_type"] == "agent_dialogue_generation"
+    assert result["agent_session_id"] == "session-73"
+    assert result["detail_url"] == "/index.html?agent_session_id=session-73"
+    assert result["visual_direction"] == {"product_form": "环形结构"}
+    assert "secret" not in result and "provider_payload" not in result["visual_direction"]

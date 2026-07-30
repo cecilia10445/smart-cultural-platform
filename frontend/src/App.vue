@@ -27,7 +27,16 @@
             <p>写下主题和用途，再选择画面方向，让创作从一个清晰的想法开始。</p>
           </div>
 
-          <form class="creation-form" @submit.prevent="generateContent" novalidate>
+          <div class="creation-mode-area">
+            <div class="creation-mode-switch" role="group" aria-label="创作模式">
+              <button type="button" :class="{ active: generationMode === 'fast' }" @click="generationMode = 'fast'">快速生成</button>
+              <button type="button" :class="{ active: generationMode === 'agent' }" @click="openNewAgentDesign">协作式设计</button>
+            </div>
+          </div>
+
+          <AgentDesignPanel v-if="generationMode === 'agent'" ref="agentPanel" :key="agentPanelKey" @return-to-history="switchTab('history')" />
+
+          <form v-if="generationMode === 'fast'" class="creation-form" @submit.prevent="generateContent" novalidate>
             <div class="brief-grid">
               <label class="field-block" data-field-key="product_type" :class="{ 'field-invalid': fieldErrors.product_type }"><span>产品类型</span><input v-model="brief.product_type" :aria-invalid="Boolean(fieldErrors.product_type)" :disabled="loading" placeholder="例如：书签" required><small v-if="fieldErrors.product_type" class="field-error">{{ fieldErrors.product_type }}</small></label>
               <label class="field-block" data-field-key="presentation_mode" :class="{ 'field-invalid': fieldErrors.presentation_mode }"><span>产品展示方式</span><select id="presentation-mode" v-model="brief.presentation_mode" :disabled="loading" @change="handlePresentationModeChange"><option value="flat_front_back">正反面</option><option value="three_view">三视图</option><option value="single_hero">单品主视图</option></select><small v-if="fieldErrors.presentation_mode" class="field-error">{{ fieldErrors.presentation_mode }}</small></label>
@@ -100,7 +109,7 @@
             </div>
           </form>
 
-          <section v-if="loading" class="generation-state" aria-live="polite">
+          <section v-if="generationMode === 'fast' && loading" class="generation-state" aria-live="polite">
             <span class="large-spinner" aria-hidden="true"></span>
             <div>
               <h2>正在处理你的创作请求</h2>
@@ -108,7 +117,7 @@
             </div>
           </section>
 
-          <section v-if="result && !loading" class="result-section" aria-labelledby="result-title">
+          <section v-if="generationMode === 'fast' && result && !loading" class="result-section" aria-labelledby="result-title">
             <div class="result-header">
               <p class="section-index">本次创作</p>
               <h2 id="result-title">生成结果</h2>
@@ -207,18 +216,22 @@
             <button type="button" class="primary-button" @click="switchTab('generate')">去创作</button>
           </div>
           <div v-else-if="history.length" class="history-grid">
-            <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry" :class="{ 'text-skill-history-entry': isTextSkillRecord(record) }">
+            <article v-for="record in history" :key="record.log_id || `${record.timestamp}-${record.prompt}`" class="history-entry" :class="{ 'text-skill-history-entry': isTextSkillRecord(record), 'agent-history-entry': isAgentRecord(record) }">
               <div v-if="!isTextSkillRecord(record)" class="history-visual">
                 <img v-if="record.image_url && !historyImageErrors[record.image_url]" :src="getImageUrl(record.image_url)" :alt="record.product_name || record.title || '产品展示图'" @error="markHistoryImageFailed(record.image_url)">
                 <div v-else class="history-image-fallback">图片无法加载</div>
               </div>
               <div v-else class="text-skill-mark" aria-hidden="true">文<br>本</div>
               <div>
-                <p class="record-style">{{ isTextSkillRecord(record) ? '文本 Skill 生成' : (isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录')) }}</p>
-                <h2>{{ isTextSkillRecord(record) ? previewText(record.product_copy_summary, 58) : (isV2Record(record) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录')) }}</h2>
+                <p class="record-style">{{ isTextSkillRecord(record) ? '文本 Skill 生成' : (isAgentRecord(record) ? '协作式设计' : (isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录'))) }}</p>
+                <h2>{{ isTextSkillRecord(record) ? previewText(record.product_copy_summary, 58) : ((isV2Record(record) || isAgentRecord(record)) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录')) }}</h2>
                 <template v-if="isTextSkillRecord(record)">
                   <p>{{ previewText(record.image_design_spec_summary, 110) }}</p>
                   <p class="text-skill-meta">Skill：{{ record.selected_skill_id }} · RAG 来源 {{ record.source_ids?.length || 0 }} 条</p>
+                </template>
+                <template v-else-if="isAgentRecord(record)">
+                  <p>{{ previewText(record.product_design_summary, 110) || '协作式产品设计已完成。' }}</p>
+                  <p class="text-skill-meta">文本 Skill：{{ record.selected_text_skill || '—' }} · 视觉 Skill：{{ record.selected_visual_skill || '—' }}</p>
                 </template>
                 <template v-else-if="isV2Record(record)">
                   <ul v-if="Array.isArray(record.selling_points) && record.selling_points.length" class="history-selling-points"><li v-for="point in record.selling_points.slice(0, 3)" :key="point">{{ point }}</li></ul>
@@ -226,7 +239,8 @@
                 </template>
                 <p v-else>{{ previewText(record.content || record.prompt, 110) }}</p>
                 <time>{{ formatDate(record.timestamp || record.generation_time) }}</time>
-                <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : openDetail(record)">查看详情</button>
+                <p v-if="isAgentRecord(record)" class="text-skill-meta">记录编号：{{ record.log_id || '—' }}</p>
+                <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : (isAgentRecord(record) ? openAgentSession(record) : openDetail(record))">查看详情</button>
               </div>
             </article>
           </div>
@@ -289,6 +303,8 @@
 import axios from 'axios'
 import ProductDetailDialog from './components/ProductDetailDialog.vue'
 import TextSkillGenerationDialog from './components/TextSkillGenerationDialog.vue'
+import AgentDesignPanel from './components/AgentDesignPanel.vue'
+import { createClientId } from './utils/clientId'
 import {
   buildStylePrompt,
   DEFAULT_DIRECTION_ID,
@@ -301,10 +317,11 @@ const DEFAULT_DIRECTION = VISUAL_DIRECTIONS.find((direction) => direction.id ===
 
 export default {
   name: 'App',
-  components: { ProductDetailDialog, TextSkillGenerationDialog },
+  components: { ProductDetailDialog, TextSkillGenerationDialog, AgentDesignPanel },
   data() {
     return {
       activeTab: 'generate',
+      generationMode: new URLSearchParams(window.location.search).get('agent_session_id') ? 'agent' : 'fast',
       prompt: '',
       confirmedFactsText: '',
       brief: {
@@ -346,6 +363,7 @@ export default {
       historyError: '',
       historyLoaded: false,
       historyImageErrors: {},
+      agentPanelKey: 0,
       trendingStyles: [],
       trendingKeywords: [],
       recommendationLoading: false,
@@ -393,6 +411,19 @@ export default {
       this.activeTab = tab
       if (tab === 'history') this.loadHistory()
       if (tab === 'recommendations') this.loadRecommendations()
+    },
+    openNewAgentDesign() {
+      if (this.generationMode === 'agent' && this.activeTab === 'generate' && this.$refs.agentPanel) {
+        this.$refs.agentPanel.startNew()
+        return
+      }
+      const url = new URL(window.location.href)
+      url.searchParams.delete('agent_session_id')
+      url.searchParams.delete('view')
+      window.history.replaceState({}, '', url)
+      this.generationMode = 'agent'
+      this.activeTab = 'generate'
+      this.agentPanelKey += 1
     },
     authHeaders() {
       const token = localStorage.getItem('token')
@@ -547,7 +578,7 @@ export default {
         // The ordinary creation workspace uses the established V2 image
         // workflow.  The text-Skill route remains a separate experimental API
         // and must not replace normal user image generation.
-        this.generationKey ||= crypto.randomUUID()
+        this.generationKey ||= createClientId()
         const response = await axios.post('/api/v2/cultural-products/generate', this.culturalBrief, {
           headers: { ...headers, 'Idempotency-Key': this.generationKey },
         })
@@ -657,6 +688,21 @@ export default {
       }
     },
     isTextSkillRecord(record) { return record?.record_type === 'text_skill_generation' },
+    isAgentRecord(record) { return record?.record_type === 'agent_dialogue_generation' },
+    openAgentSession(record) {
+      if (!record?.agent_session_id) {
+        this.historyError = '该协作式设计记录暂时无法打开。'
+        return
+      }
+      const url = new URL(window.location.href)
+      url.searchParams.set('agent_session_id', record.agent_session_id)
+      url.searchParams.set('view', 'history')
+      url.searchParams.delete('tab')
+      window.history.pushState({}, '', url)
+      this.generationMode = 'agent'
+      this.activeTab = 'generate'
+      this.agentPanelKey += 1
+    },
     async openTextSkillDetail(record) {
       if (!record?.detail_url || record.artifact_integrity !== 'verified') {
         this.historyError = '该文本生成记录的完整性未通过验证。'
@@ -932,12 +978,17 @@ button, input, select, textarea {
   color: #566057;
   line-height: 1.8;
 }
+.creation-mode-area {
+  max-width: 62rem;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #17221f;
+}
 .creation-form {
   max-width: 62rem;
   display: grid;
   gap: 1.7rem;
-  padding-top: 2rem;
-  border-top: 2px solid #17221f;
+  margin-top: 1.25rem;
+  padding-top: 0;
 }
 .field-block {
   min-width: 0;
@@ -1422,6 +1473,7 @@ textarea:focus, input:focus, select:focus {
   aspect-ratio: 1;
   background: #e9e5d9;
 }
+.creation-mode-switch{display:inline-flex;border:1px solid #aeb8ac;margin:1rem 0 0;background:#fffdf5}.creation-mode-switch button{border:0;border-right:1px solid #aeb8ac;background:transparent;color:#475148;padding:.62rem 1rem;font:inherit;cursor:pointer}.creation-mode-switch button:last-child{border-right:0}.creation-mode-switch button.active{background:#245244;color:#fffdf5}
 .history-visual img {
   width: 100%;
   height: 100%;

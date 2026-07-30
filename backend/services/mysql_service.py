@@ -483,6 +483,39 @@ class MySQLService:
 
                     response_obj = _json_object(item.get('response_json'))
                     brief_obj = _json_object(item.get('brief_json'))
+                    if item.get('generation_kind') == 'agent_dialogue_mvp':
+                        # Agent sessions have a deliberately separate response contract.
+                        # Do not let them fall through to the legacy image DTO, whose
+                        # fields and detail component do not describe a dialogue result.
+                        session_id = response_obj.get('agent_session_id')
+                        product_name = response_obj.get('product_name') or item.get('title')
+                        image_url = response_obj.get('image_url') or item.get('image_url')
+                        if not all(isinstance(value, str) and value for value in (session_id, product_name, image_url)):
+                            logger.warning("Skipping malformed Agent history row %s", log_id)
+                            continue
+                        source_ids = response_obj.get('used_source_ids')
+                        if not isinstance(source_ids, list):
+                            source_ids = []
+                        visual_direction = response_obj.get('visual_direction')
+                        if not isinstance(visual_direction, dict):
+                            visual_direction = {}
+                        processed_history.append({
+                            'record_type': 'agent_dialogue_generation',
+                            'log_id': log_id,
+                            'agent_session_id': session_id,
+                            'product_name': product_name,
+                            'image_url': image_url,
+                            'generation_time': generation_time,
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                            'evidence_status': response_obj.get('evidence_status') if isinstance(response_obj.get('evidence_status'), str) else 'creative_only',
+                            'used_source_ids': [source_id for source_id in source_ids if isinstance(source_id, str)],
+                            'selected_text_skill': response_obj.get('selected_text_skill') if isinstance(response_obj.get('selected_text_skill'), str) else None,
+                            'selected_visual_skill': response_obj.get('selected_visual_skill') if isinstance(response_obj.get('selected_visual_skill'), str) else None,
+                            'product_design_summary': response_obj.get('product_design_summary') if isinstance(response_obj.get('product_design_summary'), str) else '',
+                            'visual_direction': {key: value for key, value in visual_direction.items() if key in {'product_form', 'materials', 'color_plan', 'composition', 'scene', 'presentation_mode'} and isinstance(value, str)},
+                            'detail_url': f'/index.html?agent_session_id={session_id}',
+                        })
+                        continue
                     if item.get('generation_kind') == 'round17c_text_skill':
                         # Round 17C text generations intentionally do not have an
                         # image.  Do not let them fall through to the legacy image
