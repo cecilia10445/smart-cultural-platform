@@ -197,23 +197,37 @@ class AgentDefinition:
     max_model_requests: int = 4
     max_total_tool_calls: int = 4
     max_calls_per_tool: int = 2
+    max_calls_by_tool: dict[str, int] = field(default_factory=dict)
     allow_parallel_tool_calls: bool = False
+    provider_output_model: type[BaseModel] | None = None
+    provider_output_adapter: Callable[[Any], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "allowed_tools", frozenset(self.allowed_tools))
+        object.__setattr__(self, "max_calls_by_tool", dict(self.max_calls_by_tool))
         if not self.name.strip() or not self.instructions.strip():
             raise ValueError("Agent name and instructions must not be empty")
         if any(not isinstance(name, str) or not name.strip() for name in self.allowed_tools):
             raise ValueError("allowed_tools may not contain blank names")
         _require_pydantic_model(self.output_model, "output_model")
+        if self.provider_output_model is not None:
+            _require_pydantic_model(self.provider_output_model, "provider_output_model")
+        if self.provider_output_adapter is not None and not callable(self.provider_output_adapter):
+            raise TypeError("provider_output_adapter must be callable")
         if self.max_model_requests < 1 or self.max_total_tool_calls < 0 or self.max_calls_per_tool < 1:
             raise ValueError("Runtime budgets must be positive (tool total may be zero)")
+        if any(name not in self.allowed_tools or not isinstance(limit, int) or limit < 1
+               for name, limit in self.max_calls_by_tool.items()):
+            raise ValueError("max_calls_by_tool must contain allowed tools with positive limits")
         if self.allow_parallel_tool_calls:
             raise ValueError("A0 only supports sequential tool calls")
 
     @property
     def budget(self) -> "RuntimeBudget":
         return RuntimeBudget(self.max_model_requests, self.max_total_tool_calls, self.max_calls_per_tool)
+
+    def max_calls_for(self, tool_name: str) -> int:
+        return self.max_calls_by_tool.get(tool_name, self.max_calls_per_tool)
 
 
 @dataclass(frozen=True, slots=True)

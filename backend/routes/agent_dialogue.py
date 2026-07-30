@@ -93,7 +93,8 @@ def get_agent_runtime_turn_service():
         return repository.get_session(session_id, user_id)
     return AgentRuntimeTurnService(
         repository,
-        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), state_reader),
+        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), state_reader,
+                                  cultural_rag=api.get_cultural_rag_service()),
     )
 
 

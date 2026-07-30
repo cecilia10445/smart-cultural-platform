@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,3 +58,19 @@ class DesignConversationOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     result: DesignConversationVariant
+
+
+class ProviderDesignConversationOutput(BaseModel):
+    """Small tool-output envelope for OpenAI-compatible providers.
+
+    The full discriminated union remains the business contract and is restored
+    by ``adapt_provider_output`` before it leaves the runtime.
+    """
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["direct_answer", "ask_user", "propose_brief", "propose_design_revision", "request_business_action"]
+    payload: dict[str, Any]
+
+
+def adapt_provider_output(value: ProviderDesignConversationOutput | dict[str, Any]) -> dict[str, Any]:
+    raw = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    return {"result": {"kind": raw["kind"], **raw["payload"]}}

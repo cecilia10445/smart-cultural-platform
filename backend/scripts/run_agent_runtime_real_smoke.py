@@ -39,7 +39,7 @@ def main() -> int:
     response = TestClient(application).post(
         f"/api/v2/agent-design/sessions/{session['id']}/assistant-turns",
         headers={"Authorization": f"Bearer {token}"},
-        json={"client_turn_id": "controlled-real-smoke", "content": "Use the read-only tools before proposing a concise modern Dunhuang bookmark brief; avoid excessive antique imitation."},
+        json={"client_turn_id": "controlled-real-smoke", "content": "结合当前会话状态，为现代简约、避免过度仿古的敦煌主题书签提出 Brief。形成 Brief 前查询文化资料、加载适合的设计 Skill，并校验候选 Brief。已有有效工具结果时不要重复调用。"},
     )
     duration_ms = int((time.monotonic() - started) * 1000)
     body = response.json()

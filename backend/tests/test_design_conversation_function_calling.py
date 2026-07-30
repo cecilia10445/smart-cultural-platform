@@ -4,7 +4,14 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 from backend.agents.design_conversation import DESIGN_CONVERSATION_DEFINITION, DesignConversationService, build_design_tool_registry
-from backend.agents.runtime import ToolExecutor
+from backend.agents.runtime import (
+    AgentRunResult,
+    AgentRunStatus,
+    RuntimeUsage,
+    ToolError,
+    ToolExecutor,
+)
+from backend.agents.runtime.models import TraceRecord
 from backend.agents.runtime.adapters import PydanticAIRuntimeEngine
 
 
@@ -42,7 +49,7 @@ def test_design_conversation_function_model_reads_each_tool_observation_before_n
             }, "validate")])
         assert returns[3].content["output"]["requires_user_confirmation"] is True
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
-            "result": {"kind": "propose_brief", "brief": {}, "summary": "Need details before confirmation.", "assumptions": [],
+            "kind": "propose_brief", "payload": {"brief": {}, "summary": "Need details before confirmation.", "assumptions": [],
             "evidence_source_ids": ["source-1"], "used_skill_ids": ["heritage-motif-translation"], "used_memory_ids": []}
         })])
 
@@ -57,3 +64,26 @@ def test_design_conversation_function_model_reads_each_tool_observation_before_n
     assert observed == [[], ["inspect_design_state"], ["inspect_design_state", "search_cultural_knowledge"],
                         ["inspect_design_state", "search_cultural_knowledge", "load_design_skill"],
                         ["inspect_design_state", "search_cultural_knowledge", "load_design_skill", "validate_design_constraints"]]
+
+
+def test_design_conversation_returns_valid_ask_user_after_bounded_tool_loop_exhaustion():
+    class ExhaustedEngine:
+        async def run(self, definition, context, runtime_input):
+            return AgentRunResult(
+                run_id="run-1",
+                status=AgentRunStatus.FAILED,
+                error=ToolError(code="MODEL_REQUEST_LIMIT_EXCEEDED", message="budget exceeded"),
+                usage=RuntimeUsage(model_requests=7, requested_tool_calls=4),
+                traces=[TraceRecord(
+                    run_id="run-1", step=1, event_type="budget_exceeded",
+                    error_code="TOOL_CALL_LIMIT_EXCEEDED", budget_snapshot={},
+                )],
+            )
+
+    result = asyncio.run(DesignConversationService(ExhaustedEngine(), state_reader).run_turn(
+        "owner", "session-1", "请提出文创 Brief",
+    ))
+
+    assert result.status == AgentRunStatus.COMPLETED
+    assert result.error is None
+    assert result.final_output["result"]["kind"] == "ask_user"

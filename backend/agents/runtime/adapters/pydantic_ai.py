@@ -57,7 +57,7 @@ class PydanticAIRuntimeEngine:
         toolset = self._toolset(definition, context)
         agent = Agent(
             self.model,
-            output_type=definition.output_model,
+            output_type=definition.provider_output_model or definition.output_model,
             instructions=definition.instructions,
             deps_type=_AdapterDeps,
             toolsets=[toolset],
@@ -88,7 +88,10 @@ class PydanticAIRuntimeEngine:
             return self._failed(run_id, usage, trace, results, "RUNTIME_EXECUTION_FAILED", "run_failed")
         usage.model_requests = result.usage.requests
         try:
-            output = definition.output_model.model_validate(result.output).model_dump(mode="json")
+            provider_output = result.output
+            output = (definition.provider_output_adapter(provider_output)
+                      if definition.provider_output_adapter else provider_output)
+            output = definition.output_model.model_validate(output).model_dump(mode="json")
         except Exception:
             return self._failed(run_id, usage, trace, results, "FINAL_OUTPUT_INVALID", "run_failed")
         trace.add("final_output", usage, success=True, output_summary=fields_summary(output))
@@ -123,7 +126,7 @@ class PydanticAIRuntimeEngine:
 
     @staticmethod
     def _make_prepare(spec):
-        async def prepare(_ctx: RunContext[_AdapterDeps], tool_def):
+        async def prepare(ctx: RunContext[_AdapterDeps], tool_def):
             return replace(tool_def, name=spec.name, description=spec.description,
                            parameters_json_schema=spec.input_model.model_json_schema(), sequential=True)
         return prepare

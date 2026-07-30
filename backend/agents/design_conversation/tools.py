@@ -162,8 +162,8 @@ def build_design_tool_registry() -> ToolRegistry:
     common = frozenset({"design_conversation"})
     registry.register_many([
         ToolSpec("inspect_design_state", "Read an allow-list projection of the current design session.", InspectDesignStateInput, InspectDesignStateOutput, inspect_design_state, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 2),
-        ToolSpec("search_cultural_knowledge", "Search the approved cultural knowledge corpus.", SearchCulturalKnowledgeInput, SearchCulturalKnowledgeOutput, search_cultural_knowledge, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 5, 2),
+        ToolSpec("search_cultural_knowledge", "Search the approved cultural knowledge corpus once. If status is not matched, do not refine or retry the query: immediately return structured AskUser because no approved cultural evidence is available.", SearchCulturalKnowledgeInput, SearchCulturalKnowledgeOutput, search_cultural_knowledge, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 5, 2),
         ToolSpec("load_design_skill", "Load one versioned design guidance skill.", LoadDesignSkillInput, LoadDesignSkillOutput, load_design_skill, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 2),
-        ToolSpec("validate_design_constraints", "Deterministically validate a candidate brief and provenance references.", ValidateDesignConstraintsInput, ValidateDesignConstraintsOutput, validate_design_constraints, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 2),
+        ToolSpec("validate_design_constraints", "Validate one candidate brief before ProposeBrief. Pass the candidate brief plus only source IDs returned by search and skill IDs returned by load; valid=true means return the structured final result now.", ValidateDesignConstraintsInput, ValidateDesignConstraintsOutput, validate_design_constraints, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 1),
     ])
     return registry

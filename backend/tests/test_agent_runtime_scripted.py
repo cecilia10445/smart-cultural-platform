@@ -70,7 +70,7 @@ def test_scripted_runtime_passes_unknown_and_forbidden_observations_without_exec
 def test_scripted_runtime_enforces_model_and_tool_budgets_and_response_shape():
     model_limited = run([call(), ScriptedFinalResponse({"answer": "late"})], max_requests=1)
     assert model_limited.status == "failed" and model_limited.error.code == "MODEL_REQUEST_LIMIT_EXCEEDED"
-    tool_limited = run([call("a"), call("b"), ScriptedFinalResponse({"answer": "late"})], max_tools=1)
+    tool_limited = run([call("a", "one"), call("b", "two"), ScriptedFinalResponse({"answer": "late"})], max_tools=1)
     assert tool_limited.tool_results[-1].error.code == "TOOL_CALL_LIMIT_EXCEEDED"
     multiple = run([ScriptedMultipleToolCallsResponse((call("a").call, call("b").call))])
     assert multiple.status == "failed" and multiple.error.code == "MULTIPLE_TOOL_CALLS_NOT_ALLOWED" and not multiple.tool_results

@@ -22,6 +22,7 @@ from .trace import TraceRecorder, arguments_hash, canonical_arguments, fields_su
 @dataclass(slots=True)
 class ToolCallLedger:
     entries: dict[str, tuple[str, str, ToolResult, PendingApproval | None]] = field(default_factory=dict)
+    semantic_entries: dict[tuple[str, str], tuple[ToolResult, PendingApproval | None]] = field(default_factory=dict)
 
     def replay_or_conflict(self, call: ToolCall) -> tuple[ToolResult | None, PendingApproval | None, bool]:
         signature = (call.tool_name, canonical_arguments(call.arguments))
@@ -37,8 +38,17 @@ class ToolCallLedger:
             duration_ms=0,
         ), None, True
 
-    def record(self, call: ToolCall, result: ToolResult, approval: PendingApproval | None = None) -> None:
+    def record(self, call: ToolCall, result: ToolResult, approval: PendingApproval | None = None, *, semantic: bool = False) -> None:
         self.entries[call.tool_call_id] = (call.tool_name, canonical_arguments(call.arguments), result, approval)
+        if result.ok and semantic:
+            self.semantic_entries[(call.tool_name, canonical_arguments(call.arguments))] = (result, approval)
+
+    def semantic_replay(self, call: ToolCall) -> tuple[ToolResult, PendingApproval | None] | None:
+        value = self.semantic_entries.get((call.tool_name, canonical_arguments(call.arguments)))
+        if value is None:
+            return None
+        result, approval = value
+        return result.model_copy(update={"tool_call_id": call.tool_call_id, "replayed": True}), approval
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +84,14 @@ class ToolExecutor:
                       arguments_hash=arguments_hash(call.arguments))
             return ToolExecutionOutcome(replay, approval)
 
-        if usage.requested_tool_calls >= definition.max_total_tool_calls or usage.requested_calls_by_tool.get(call.tool_name, 0) >= definition.max_calls_per_tool:
+        semantic = ledger.semantic_replay(call)
+        if semantic is not None:
+            result, approval = semantic
+            trace.add("tool_semantic_replayed", usage, tool_call_id=call.tool_call_id, tool_name=call.tool_name,
+                      success=result.ok, arguments_hash=arguments_hash(call.arguments))
+            return ToolExecutionOutcome(result, approval)
+
+        if usage.requested_tool_calls >= definition.max_total_tool_calls or usage.requested_calls_by_tool.get(call.tool_name, 0) >= definition.max_calls_for(call.tool_name):
             result = self._error(call, ToolErrorCode.TOOL_CALL_LIMIT_EXCEEDED)
             ledger.record(call, result)
             trace.add("budget_exceeded", usage, tool_call_id=call.tool_call_id, tool_name=call.tool_name,
@@ -134,7 +151,7 @@ class ToolExecutor:
             return self._record_failure(call, ledger, trace, usage, result, spec.risk)
         result = ToolResult(tool_call_id=call.tool_call_id, tool_name=call.tool_name, ok=True, output=output,
                             duration_ms=self._elapsed_ms(started))
-        ledger.record(call, result)
+        ledger.record(call, result, semantic=spec.risk.value == "READ_ONLY")
         trace.add("tool_completed", usage, tool_call_id=call.tool_call_id, tool_name=call.tool_name, risk=spec.risk,
                   success=True, duration_ms=result.duration_ms, arguments_hash=arguments_hash(call.arguments), output_summary=fields_summary(output))
         return ToolExecutionOutcome(result)

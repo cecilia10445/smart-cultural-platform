@@ -103,11 +103,28 @@ def test_ledger_replays_identical_calls_and_rejects_conflicts():
     assert traces[-1].event_type == "tool_replayed"
 
 
+def test_semantic_replay_uses_first_read_only_result_for_a_new_call_id():
+    ledger, usage = ToolCallLedger(), RuntimeUsage()
+    first, usage, _ = asyncio.run(execute(ToolCall(tool_call_id="first", tool_name="add_numbers", arguments={"value": 2}), ledger=ledger, usage=usage))
+    replay, usage, traces = asyncio.run(execute(ToolCall(tool_call_id="new-id", tool_name="add_numbers", arguments={"value": 2}), ledger=ledger, usage=usage))
+    assert first.result.ok and replay.result.replayed and replay.result.tool_call_id == "new-id"
+    assert usage.requested_tool_calls == 1 and usage.executed_tool_calls == 1
+    assert traces[-1].event_type == "tool_semantic_replayed"
+
+
 def test_budget_counts_unique_requests_and_spec_execution_limit():
     definition = agent(max_total_tool_calls=1, max_calls_per_tool=1)
     ledger, usage = ToolCallLedger(), RuntimeUsage()
     asyncio.run(execute(ToolCall(tool_call_id="1", tool_name="add_numbers", arguments={"value": 1}), definition=definition, ledger=ledger, usage=usage))
     outcome, usage, _ = asyncio.run(execute(ToolCall(tool_call_id="2", tool_name="failing_tool", arguments={"value": 1}), definition=definition, ledger=ledger, usage=usage))
+    assert outcome.result.error.code == ToolErrorCode.TOOL_CALL_LIMIT_EXCEEDED.value
+
+
+def test_definition_per_tool_budget_overrides_default_limit():
+    definition = agent(max_calls_per_tool=2, max_calls_by_tool={"add_numbers": 1})
+    ledger, usage = ToolCallLedger(), RuntimeUsage()
+    asyncio.run(execute(ToolCall(tool_call_id="first", tool_name="add_numbers", arguments={"value": 1}), definition=definition, ledger=ledger, usage=usage))
+    outcome, _, _ = asyncio.run(execute(ToolCall(tool_call_id="second", tool_name="add_numbers", arguments={"value": 2}), definition=definition, ledger=ledger, usage=usage))
     assert outcome.result.error.code == ToolErrorCode.TOOL_CALL_LIMIT_EXCEEDED.value
     per_tool = agent(max_total_tool_calls=8, max_calls_per_tool=1)
     ledger, usage = ToolCallLedger(), RuntimeUsage()
