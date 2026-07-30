@@ -205,6 +205,37 @@ class AgentDialogueRepository:
             raise AgentPersistenceUnavailable()
         return row
 
+    def finish_brief(self, session_id: str, user_id: str, *, brief: dict[str, Any], summary: str, step_id: str) -> None:
+        """Persist only normalized Brief and visible summary after the model call."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at)
+                VALUES (%s,%s,%s,'assistant','brief_summary',%s,NULL,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, summary, now),
+            )
+            cursor.execute(
+                """UPDATE agent_steps SET status='completed',output_summary_json=%s,finished_at=%s
+                WHERE id=%s AND session_id=%s""", (self._json({"summary": "Brief proposal ready"}), now, step_id, session_id)
+            )
+            cursor.execute(
+                """UPDATE agent_sessions SET brief_json=%s,status=%s,current_stage=%s,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (self._json(brief), AgentSessionStatus.WAITING_BRIEF_CONFIRMATION.value,
+                 AgentSessionStatus.WAITING_BRIEF_CONFIRMATION.value, now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+
+    def fail_step(self, session_id: str, user_id: str, step_id: str, error: dict[str, Any]) -> None:
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("UPDATE agent_steps SET status='failed',error_json=%s,error_code=%s,finished_at=%s WHERE id=%s AND session_id=%s",
+                           (self._json(error), error.get("code"), self._now(), step_id, session_id))
+
     def transition(
         self, session_id: str, user_id: str, target: AgentSessionStatus,
         expected_status: AgentSessionStatus | None, expected_version: int | None,
@@ -278,4 +309,25 @@ class AgentDialogueRepository:
                  "Decision received; no decision action is enabled in this implementation round.",
                  self._json({"decision": decision, "outcome": "not_supported"}), None, decision_id, now),
             )
+        return False
+
+    def confirm_brief(self, session_id: str, user_id: str, decision_id: str, expected_version: int | None) -> bool:
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT id FROM agent_messages WHERE session_id=%s AND decision_id=%s LIMIT 1", (session_id, decision_id))
+            if self._fetchone(cursor) is not None:
+                return True
+            self._check_expected(session, AgentSessionStatus.WAITING_BRIEF_CONFIRMATION, expected_version)
+            if not session.get("brief_json"):
+                raise AgentSessionStateConflict()
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute("""INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,decision_id,created_at)
+                VALUES (%s,%s,%s,'assistant','decision_receipt',%s,NULL,%s,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, "需求方案已确认，下一步将生成产品设计文本。", decision_id, now))
+            cursor.execute("UPDATE agent_sessions SET status=%s,current_stage=%s,version=version+1,updated_at=%s WHERE id=%s AND user_id=%s AND version=%s",
+                           (AgentSessionStatus.GENERATING_PRODUCT_TEXT.value, AgentSessionStatus.GENERATING_PRODUCT_TEXT.value, now, session_id, user_id, session["version"]))
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
         return False

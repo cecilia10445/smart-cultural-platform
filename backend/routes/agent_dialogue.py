@@ -145,11 +145,10 @@ async def submit_decision(session_id: str, request: Request):
     if payload is None:
         return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
     try:
-        get_agent_dialogue_service().submit_decision(
+        detail = get_agent_dialogue_service().submit_decision(
             session_id, user_id, decision_id=payload.decision_id, decision=payload.decision,
             expected_status=payload.expected_status, expected_version=payload.expected_version,
         )
+        return _success(request, detail)
     except AgentDialogueError as error:
         return _handle_domain_error(request, error)
-    # Defensive only: submit_decision intentionally always raises until round two.
-    return _error(request, "AGENT_DECISION_NOT_SUPPORTED", "Agent decisions are not available in this implementation round.", 409)

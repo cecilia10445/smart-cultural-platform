@@ -104,6 +104,26 @@ class AgentPersistenceUnavailable(AgentDialogueError):
     message = "Agent session data service is temporarily unavailable."
 
 
+class BriefOutputInvalid(AgentDialogueError):
+    code = "BRIEF_OUTPUT_INVALID"
+    status_code = 422
+    message = "The brief proposal could not be validated."
+
+
+class AgentModelUnavailable(AgentDialogueError):
+    code = "MODEL_UNAVAILABLE"
+    status_code = 503
+    retryable = True
+    message = "Brief generation service is temporarily unavailable."
+
+
+class AgentModelTimeout(AgentDialogueError):
+    code = "MODEL_TIMEOUT"
+    status_code = 503
+    retryable = True
+    message = "Brief generation service did not respond in time."
+
+
 class CreateAgentSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -126,6 +146,29 @@ class AgentDecisionRequest(BaseModel):
     decision: str = Field(min_length=1, max_length=64)
     expected_status: AgentSessionStatus
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class BriefUnderstanding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cultural_theme: str
+    product_type: str
+    use_case: str
+    style: str
+    form_and_material: str
+    presentation_mode: str
+    design_constraints: list[str] = Field(default_factory=list)
+
+
+class BriefProposal(BaseModel):
+    """Structured, user-visible-safe result of the restricted Brief stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    normalized_brief: dict[str, Any]
+    understanding: BriefUnderstanding
+    assumptions: list[str] = Field(default_factory=list)
+    user_facing_summary: str = Field(min_length=1, max_length=2000)
 
 
 class AgentMessageResponse(BaseModel):
@@ -288,6 +331,9 @@ def _brief_projection(value: Any) -> BriefSummaryResponse | None:
     raw = _json_object(value)
     if not raw:
         return None
+    understanding = _json_object(raw.get("understanding"))
+    if understanding:
+        raw = {**raw, **understanding, "assumptions": raw.get("assumptions", [])}
     return BriefSummaryResponse(
         cultural_theme=_text(raw.get("cultural_theme") or raw.get("cultural_source")),
         product_type=_text(raw.get("product_type")),
