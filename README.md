@@ -242,7 +242,7 @@ npm run test:e2e
 真实模型冒烟依赖有效环境变量、目标数据库与显式授权；它不应被 mock 测试替代，也不应在未授权时自动执行。
 
 ## 项目预览
-![协作式设计文创生成演示](屏幕截图_30-7-2026_184046_192.168.48.133.jpeg)
+![协作式设计文创生成演示](docs/demo/屏幕截图_30-7-2026_184046_192.168.48.133.jpeg)
 [![普通用户文创生成演示](docs/demo/smart-cultural-platform-user-image-demo-poster.png)](docs/demo/smart-cultural-platform-user-image-demo.webm)
 
 普通用户工作区展示结构化快速生成、结果查看与创作记录。
