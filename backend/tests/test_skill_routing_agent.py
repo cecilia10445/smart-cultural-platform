@@ -153,7 +153,7 @@ def test_unregistered_tool_does_not_pass_as_a_fixture():
 def test_retrieve_tool_parameters_and_citation_subset():
     value = deps()
     response = _retrieve(ctx(value), "中国青花瓷文创书签", 1)
-    assert response["status"] == "grounded"
+    assert response["status"] == "matched"
     assert response["sources"][0]["source_id"] == "met-39666"
     assert value.retrieved_source_ids == {"met-39666"}
 
