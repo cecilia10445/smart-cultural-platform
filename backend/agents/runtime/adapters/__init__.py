@@ -4,8 +4,10 @@ from .scripted import (
     ScriptedEmptyResponse, ScriptedFinalResponse, ScriptedMultipleToolCallsResponse,
     ScriptedRuntimeEngine, ScriptedToolCallResponse,
 )
+from .pydantic_ai import PydanticAIRuntimeEngine
 
 __all__ = [
     "ScriptedEmptyResponse", "ScriptedFinalResponse", "ScriptedMultipleToolCallsResponse",
     "ScriptedRuntimeEngine", "ScriptedToolCallResponse",
+    "PydanticAIRuntimeEngine",
 ]
