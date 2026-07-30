@@ -179,6 +179,12 @@ class AppendAgentMessageRequest(BaseModel):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+class AssistantTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=4000)
+    client_turn_id: str = Field(min_length=1, max_length=128)
+
+
 class AgentDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

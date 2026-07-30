@@ -15,6 +15,7 @@ from backend.domain.agent_dialogue import (
     AgentDialogueError,
     AgentPersistenceUnavailable,
     AppendAgentMessageRequest,
+    AssistantTurnRequest,
     CreateAgentSessionRequest,
 )
 from backend.services.agent_dialogue_repository import AgentDialogueRepository
@@ -72,6 +73,11 @@ def get_agent_dialogue_service() -> AgentDialogueService:
     from backend.routes import api
 
     return AgentDialogueService(AgentDialogueRepository(api.mysql_service))
+
+
+def get_agent_runtime_turn_service():
+    """Provider injection boundary; no real model is enabled by default."""
+    return None
 
 
 async def _payload(request: Request, model):
@@ -150,5 +156,37 @@ async def submit_decision(session_id: str, request: Request):
             expected_status=payload.expected_status, expected_version=payload.expected_version,
         )
         return _success(request, detail)
+    except AgentDialogueError as error:
+        return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/sessions/{session_id}/assistant-turns")
+async def assistant_turn(session_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, AssistantTurnRequest)
+    if payload is None:
+        return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    service = get_agent_runtime_turn_service()
+    if service is None:
+        return _error(request, "RUNTIME_PROVIDER_UNAVAILABLE", "Assistant runtime is not configured.", 503, unavailable=True)
+    try:
+        run, replayed = await service.run_turn(user_id, session_id, payload.content, payload.client_turn_id)
+        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": {"run": run, "replayed": replayed}}))
+    except AgentDialogueError as error:
+        return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/assistant-turns/{run_id}")
+async def get_assistant_turn(session_id: str, run_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    service = get_agent_runtime_turn_service()
+    if service is None:
+        return _error(request, "RUNTIME_PROVIDER_UNAVAILABLE", "Assistant runtime is not configured.", 503, unavailable=True)
+    try:
+        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": service.repository.get_run(session_id, user_id, run_id)}))
     except AgentDialogueError as error:
         return _handle_domain_error(request, error)
