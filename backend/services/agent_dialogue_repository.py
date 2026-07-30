@@ -128,6 +128,16 @@ class AgentDialogueRepository:
             rows = cursor.fetchall()
         return [dict(row) for row in rows if isinstance(row, dict)]
 
+    def has_client_turn(self, session_id: str, user_id: str, client_turn_id: str) -> bool:
+        """Owner-scoped idempotency check used before rejecting a fifth revision."""
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute(
+                "SELECT id FROM agent_messages WHERE session_id=%s AND client_turn_id=%s LIMIT 1",
+                (session_id, client_turn_id),
+            )
+            return self._fetchone(cursor) is not None
+
     def get_detail_rows(self, session_id: str, user_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         """Read an owner-scoped snapshot. Rows remain internal to the service."""
         with self._transaction() as cursor:
@@ -236,6 +246,66 @@ class AgentDialogueRepository:
             cursor.execute("UPDATE agent_steps SET status='failed',error_json=%s,error_code=%s,finished_at=%s WHERE id=%s AND session_id=%s",
                            (self._json(error), error.get("code"), self._now(), step_id, session_id))
 
+    def finish_step(
+        self, session_id: str, user_id: str, step_id: str, output_summary: dict[str, Any],
+        tool_result_summary: dict[str, Any] | None = None,
+    ) -> None:
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute(
+                """UPDATE agent_steps SET status='completed',output_summary_json=%s,tool_result_summary_json=%s,finished_at=%s
+                WHERE id=%s AND session_id=%s""",
+                (self._json(output_summary), self._json(tool_result_summary), self._now(), step_id, session_id),
+            )
+
+    def finish_product_text(
+        self, session_id: str, user_id: str, *, draft: dict[str, Any], summary: str,
+        step_id: str, is_revision: bool,
+    ) -> None:
+        """Store a validated draft and visible summary after the model request ends."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            if session.get("status") != AgentSessionStatus.GENERATING_PRODUCT_TEXT.value:
+                raise AgentSessionStateConflict()
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at)
+                VALUES (%s,%s,%s,'assistant','product_design',%s,NULL,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, summary, now),
+            )
+            cursor.execute(
+                """UPDATE agent_steps SET status='completed',output_summary_json=%s,finished_at=%s
+                WHERE id=%s AND session_id=%s""",
+                (self._json({"summary": "Product design text ready"}), now, step_id, session_id),
+            )
+            cursor.execute(
+                """UPDATE agent_sessions SET confirmed_text_json=%s,text_revision_count=text_revision_count+%s,
+                status=%s,current_stage=%s,error_json=NULL,error_code=NULL,failure_stage=NULL,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (self._json(draft), 1 if is_revision else 0, AgentSessionStatus.WAITING_TEXT_FEEDBACK.value,
+                 AgentSessionStatus.WAITING_TEXT_FEEDBACK.value, now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+
+    def return_to_text_feedback(self, session_id: str, user_id: str, error: dict[str, Any]) -> None:
+        """Keep the last valid draft available when a revision model call fails."""
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            if session.get("status") != AgentSessionStatus.GENERATING_PRODUCT_TEXT.value:
+                raise AgentSessionStateConflict()
+            cursor.execute(
+                """UPDATE agent_sessions SET status=%s,current_stage=%s,error_json=%s,error_code=%s,
+                failure_stage=%s,version=version+1,updated_at=%s WHERE id=%s AND user_id=%s AND version=%s""",
+                (AgentSessionStatus.WAITING_TEXT_FEEDBACK.value, AgentSessionStatus.WAITING_TEXT_FEEDBACK.value,
+                 self._json(error), error.get("code"), "generating_product_text", now, session_id, user_id, session["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+
     def transition(
         self, session_id: str, user_id: str, target: AgentSessionStatus,
         expected_status: AgentSessionStatus | None, expected_version: int | None,
@@ -328,6 +398,33 @@ class AgentDialogueRepository:
                 (str(uuid.uuid4()), session_id, sequence, "需求方案已确认，下一步将生成产品设计文本。", decision_id, now))
             cursor.execute("UPDATE agent_sessions SET status=%s,current_stage=%s,version=version+1,updated_at=%s WHERE id=%s AND user_id=%s AND version=%s",
                            (AgentSessionStatus.GENERATING_PRODUCT_TEXT.value, AgentSessionStatus.GENERATING_PRODUCT_TEXT.value, now, session_id, user_id, session["version"]))
+            if cursor.rowcount != 1:
+                raise AgentSessionVersionConflict()
+        return False
+
+    def confirm_product_text(self, session_id: str, user_id: str, decision_id: str, expected_version: int | None) -> bool:
+        now = self._now()
+        with self._transaction() as cursor:
+            session = self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT id FROM agent_messages WHERE session_id=%s AND decision_id=%s LIMIT 1", (session_id, decision_id))
+            if self._fetchone(cursor) is not None:
+                return True
+            self._check_expected(session, AgentSessionStatus.WAITING_TEXT_FEEDBACK, expected_version)
+            if not session.get("confirmed_text_json"):
+                raise AgentSessionStateConflict()
+            cursor.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id=%s", (session_id,))
+            sequence = int((self._fetchone(cursor) or {}).get("next_sequence") or 1)
+            cursor.execute(
+                """INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,decision_id,created_at)
+                VALUES (%s,%s,%s,'assistant','decision_receipt',%s,NULL,%s,%s)""",
+                (str(uuid.uuid4()), session_id, sequence, "产品设计方案已确认，下一步将整理视觉方向和图片生成提示。", decision_id, now),
+            )
+            cursor.execute(
+                """UPDATE agent_sessions SET status=%s,current_stage=%s,version=version+1,updated_at=%s
+                WHERE id=%s AND user_id=%s AND version=%s""",
+                (AgentSessionStatus.BUILDING_VISUAL_PROMPT.value, AgentSessionStatus.BUILDING_VISUAL_PROMPT.value,
+                 now, session_id, user_id, session["version"]),
+            )
             if cursor.rowcount != 1:
                 raise AgentSessionVersionConflict()
         return False

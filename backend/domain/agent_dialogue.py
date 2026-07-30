@@ -124,6 +124,32 @@ class AgentModelTimeout(AgentDialogueError):
     message = "Brief generation service did not respond in time."
 
 
+class ProductTextModelUnavailable(AgentDialogueError):
+    code = "PRODUCT_TEXT_MODEL_UNAVAILABLE"
+    status_code = 503
+    retryable = True
+    message = "Product design text service is temporarily unavailable."
+
+
+class ProductTextModelTimeout(AgentDialogueError):
+    code = "PRODUCT_TEXT_MODEL_TIMEOUT"
+    status_code = 503
+    retryable = True
+    message = "Product design text service did not respond in time."
+
+
+class ProductTextOutputInvalid(AgentDialogueError):
+    code = "PRODUCT_TEXT_OUTPUT_INVALID"
+    status_code = 422
+    message = "The product design text could not be validated."
+
+
+class TextRevisionLimitReached(AgentDialogueError):
+    code = "TEXT_REVISION_LIMIT_REACHED"
+    status_code = 409
+    message = "The product design text has reached the four-revision limit."
+
+
 class CreateAgentSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -169,6 +195,32 @@ class BriefProposal(BaseModel):
     understanding: BriefUnderstanding
     assumptions: list[str] = Field(default_factory=list)
     user_facing_summary: str = Field(min_length=1, max_length=2000)
+
+
+class ProductDesignDraft(BaseModel):
+    """Validated internal result for the product-text stage.
+
+    This is deliberately separate from the legacy fast-generation response.
+    It only contains user-visible design material and compact evidence metadata.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_name: str = Field(min_length=1, max_length=2000)
+    design_concept: str = Field(min_length=1, max_length=2000)
+    cultural_translation: str = Field(min_length=1, max_length=2000)
+    structure: str = Field(min_length=1, max_length=2000)
+    materials: str = Field(min_length=1, max_length=2000)
+    color_plan: str = Field(min_length=1, max_length=1000)
+    usage_scene: str = Field(min_length=1, max_length=1000)
+    selling_points: list[str] = Field(min_length=1, max_length=5)
+    creative_origin: str = Field(min_length=1, max_length=2000)
+    factual_background: str = Field(min_length=1, max_length=2000)
+    evidence_status: Literal["grounded", "insufficient_evidence", "creative_only"]
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    used_source_ids: list[str] = Field(default_factory=list)
+    selected_text_skill: str | None = None
+    revision_summary: str | None = Field(default=None, max_length=1000)
 
 
 class AgentMessageResponse(BaseModel):
@@ -227,7 +279,13 @@ class ProductDesignResponse(BaseModel):
     color_plan: str | None = None
     usage_scene: str | None = None
     selling_points: list[str] = Field(default_factory=list)
+    creative_origin: str | None = None
+    factual_background: str | None = None
+    evidence_status: str | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
+    used_source_ids: list[str] = Field(default_factory=list)
+    selected_text_skill: str | None = None
+    revision_summary: str | None = None
 
 
 class VisualDirectionResponse(BaseModel):
@@ -357,7 +415,13 @@ def _design_projection(value: Any) -> ProductDesignResponse | None:
         color_plan=_text(raw.get("color_plan")),
         usage_scene=_text(raw.get("usage_scene")),
         selling_points=_text_list(raw.get("selling_points")),
+        creative_origin=_text(raw.get("creative_origin")),
+        factual_background=_text(raw.get("factual_background")),
+        evidence_status=_text(raw.get("evidence_status")),
         evidence=_object_list(raw.get("evidence")),
+        used_source_ids=_text_list(raw.get("used_source_ids")),
+        selected_text_skill=_text(raw.get("selected_text_skill")),
+        revision_summary=_text(raw.get("revision_summary")),
     )
 
 

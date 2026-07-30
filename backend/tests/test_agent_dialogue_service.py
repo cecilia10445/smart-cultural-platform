@@ -5,7 +5,7 @@ import pytest
 
 from backend.domain.agent_dialogue import (
     AgentDecisionNotSupported, AgentInvalidTransition, AgentSessionStateConflict,
-    AgentSessionStatus, AgentSessionVersionConflict,
+    AgentSessionStatus, AgentSessionVersionConflict, ProductDesignDraft, ProductTextModelTimeout,
 )
 from backend.services.agent_dialogue_service import AgentDialogueService
 from backend.services.agent_brief_agent import BriefAgent
@@ -49,6 +49,10 @@ class MemoryRepository:
         self._row(session_id, user_id)
         return deepcopy(self.sessions[session_id]), deepcopy(self.messages[session_id]), deepcopy(self.steps[session_id])
 
+    def has_client_turn(self, session_id, user_id, client_turn_id):
+        self._row(session_id, user_id)
+        return any(item.get("client_turn_id") == client_turn_id for item in self.messages[session_id])
+
     def append_user_message(self, session_id, user_id, text, client_turn_id, expected_status, expected_version):
         row = self._row(session_id, user_id)
         if any(item.get("client_turn_id") == client_turn_id for item in self.messages[session_id]):
@@ -83,12 +87,44 @@ class MemoryRepository:
         self._row(session_id, user_id)
         next(item for item in self.steps[session_id] if item["id"] == step_id).update(status="failed", error_json=error, error_code=error["code"])
 
+    def finish_step(self, session_id, user_id, step_id, output_summary, tool_result_summary=None):
+        self._row(session_id, user_id)
+        next(item for item in self.steps[session_id] if item["id"] == step_id).update(
+            status="completed", output_summary_json=output_summary, tool_result_summary_json=tool_result_summary,
+        )
+
+    def finish_product_text(self, session_id, user_id, *, draft, summary, step_id, is_revision):
+        row = self._row(session_id, user_id)
+        if row["status"] != "generating_product_text":
+            raise AgentSessionStateConflict()
+        self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1,
+                                          "role": "assistant", "message_type": "product_design", "content_text": summary, "created_at": self._now()})
+        next(item for item in self.steps[session_id] if item["id"] == step_id).update(status="completed", output_summary_json={"summary": "Product design text ready"})
+        row.update(confirmed_text_json=draft, text_revision_count=row["text_revision_count"] + (1 if is_revision else 0),
+                   status="waiting_text_feedback", current_stage="waiting_text_feedback", error_json=None, error_code=None,
+                   failure_stage=None, version=row["version"] + 1, updated_at=self._now())
+
+    def return_to_text_feedback(self, session_id, user_id, error):
+        row = self._row(session_id, user_id)
+        row.update(status="waiting_text_feedback", current_stage="waiting_text_feedback", error_json=error, error_code=error["code"],
+                   failure_stage="generating_product_text", version=row["version"] + 1, updated_at=self._now())
+
     def confirm_brief(self, session_id, user_id, decision_id, expected_version):
         row = self._row(session_id, user_id)
         if any(item.get("decision_id") == decision_id for item in self.messages[session_id]): return True
         if row["status"] != "waiting_brief_confirmation": raise AgentSessionStateConflict()
         self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1, "role": "assistant", "message_type": "decision_receipt", "content_text": "需求方案已确认，下一步将生成产品设计文本。", "decision_id": decision_id, "created_at": self._now()})
         row.update(status="generating_product_text", current_stage="generating_product_text", version=row["version"] + 1)
+        return False
+
+    def confirm_product_text(self, session_id, user_id, decision_id, expected_version):
+        row = self._row(session_id, user_id)
+        if any(item.get("decision_id") == decision_id for item in self.messages[session_id]): return True
+        if row["status"] != "waiting_text_feedback": raise AgentSessionStateConflict()
+        self.messages[session_id].append({"id": f"message-{len(self.messages[session_id]) + 1}", "sequence_no": len(self.messages[session_id]) + 1,
+                                          "role": "assistant", "message_type": "decision_receipt", "content_text": "产品设计方案已确认，下一步将整理视觉方向和图片生成提示。",
+                                          "decision_id": decision_id, "created_at": self._now()})
+        row.update(status="building_visual_prompt", current_stage="building_visual_prompt", version=row["version"] + 1, updated_at=self._now())
         return False
 
     def transition(self, session_id, user_id, target, expected_status, expected_version):
@@ -122,9 +158,35 @@ class MemoryRepository:
         return False
 
 
+class FakeProductTextService:
+    def __init__(self): self.calls = 0
+
+    def retrieve_cultural_evidence(self, _brief):
+        return {"status": "creative_only", "evidence": [], "sources": [], "fallback": "no_reliable_match"}
+
+    def select_text_skill(self, _brief):
+        return {"skill_id": "retail-product-copy", "version": "1.0.0", "instruction": "test", "fallback": False}
+
+    def generate(self, brief, evidence, skill, *, current_draft=None, feedback=None):
+        self.calls += 1
+        base = current_draft or {
+            "product_name": "三兔环光桌面灯", "design_concept": "环形动态感", "cultural_translation": "以三兔共耳的循环关系转译为灯体环形结构",
+            "structure": brief["form_and_material"], "materials": "金属与半透明亚克力", "color_plan": "暖白与深灰",
+            "usage_scene": brief["use_case"], "selling_points": ["环形识别", "柔和照明", "现代材质"],
+            "creative_origin": "三兔共耳的循环构图", "factual_background": "当前资料不足；作为当代设计转译。",
+            "evidence_status": evidence["status"], "evidence": [], "used_source_ids": [],
+            "selected_text_skill": skill["skill_id"], "revision_summary": None,
+        }
+        result = dict(base)
+        if feedback:
+            result["materials"] = "磨砂金属和半透明亚克力" if "磨砂" in feedback else result["materials"]
+            result["revision_summary"] = f"已根据反馈调整：{feedback}"
+        return ProductDesignDraft.model_validate(result)
+
+
 @pytest.fixture()
 def service():
-    return AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal))
+    return AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), FakeProductTextService())
 
 
 def test_session_message_idempotency_owner_scope_and_sequence(service):
@@ -166,10 +228,46 @@ def test_failed_session_preserves_messages_steps_and_decision_receipt_is_idempot
     assert len(service.get_session(created.session_id, "U1").messages) == 2
 
 
-def test_confirm_brief_moves_once_to_product_text_stage(service):
+def test_confirm_brief_generates_product_text_once(service):
     created = service.create_session("U1")
     service.append_message(created.session_id, "U1", text="设计现代桌面灯", client_turn_id="turn-1")
     confirmed = service.submit_decision(created.session_id, "U1", decision_id="decision-1", decision="confirm_brief", expected_status=AgentSessionStatus.WAITING_BRIEF_CONFIRMATION)
     replay = service.submit_decision(created.session_id, "U1", decision_id="decision-1", decision="confirm_brief", expected_status=AgentSessionStatus.WAITING_BRIEF_CONFIRMATION)
-    assert confirmed.status is AgentSessionStatus.GENERATING_PRODUCT_TEXT
-    assert replay.status is AgentSessionStatus.GENERATING_PRODUCT_TEXT
+    assert confirmed.status is AgentSessionStatus.WAITING_TEXT_FEEDBACK
+    assert replay.status is AgentSessionStatus.WAITING_TEXT_FEEDBACK
+    assert confirmed.product_design is not None and confirmed.revision_count == 0
+
+
+def test_product_text_revision_limit_and_confirmation(service):
+    created = service.create_session("U1")
+    service.append_message(created.session_id, "U1", text="设计现代桌面灯", client_turn_id="brief")
+    service.submit_decision(created.session_id, "U1", decision_id="confirm-brief", decision="confirm_brief", expected_status=AgentSessionStatus.WAITING_BRIEF_CONFIRMATION)
+    for revision in range(4):
+        detail, replayed = service.append_message(created.session_id, "U1", text="材质改成磨砂金属", client_turn_id=f"revision-{revision}", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+        assert not replayed and detail.revision_count == revision + 1
+        if revision == 0:
+            duplicate, duplicate_replayed = service.append_message(created.session_id, "U1", text="ignored", client_turn_id="revision-0", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+            assert duplicate_replayed and duplicate.revision_count == 1
+    with pytest.raises(Exception) as limited:
+        service.append_message(created.session_id, "U1", text="再改一次", client_turn_id="revision-5", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+    assert getattr(limited.value, "code", None) == "TEXT_REVISION_LIMIT_REACHED"
+    confirmed = service.submit_decision(created.session_id, "U1", decision_id="confirm-text", decision="confirm_product_text", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+    assert confirmed.status is AgentSessionStatus.BUILDING_VISUAL_PROMPT
+
+
+def test_failed_revision_keeps_last_valid_design_and_does_not_increment_count():
+    product = FakeProductTextService()
+    service = AgentDialogueService(MemoryRepository(), BriefAgent(runner=proposal), product)
+    created = service.create_session("U1")
+    service.append_message(created.session_id, "U1", text="设计现代桌面灯", client_turn_id="brief")
+    original = service.submit_decision(created.session_id, "U1", decision_id="confirm-brief", decision="confirm_brief", expected_status=AgentSessionStatus.WAITING_BRIEF_CONFIRMATION)
+
+    def unavailable(*_args, **_kwargs):
+        raise ProductTextModelTimeout()
+    product.generate = unavailable
+    with pytest.raises(ProductTextModelTimeout):
+        service.append_message(created.session_id, "U1", text="颜色改深灰", client_turn_id="revision-fail", expected_status=AgentSessionStatus.WAITING_TEXT_FEEDBACK)
+    restored = service.get_session(created.session_id, "U1")
+    assert restored.status is AgentSessionStatus.WAITING_TEXT_FEEDBACK
+    assert restored.revision_count == 0 and restored.product_design == original.product_design
+    assert restored.steps[-1].status == "failed" and restored.error.code == "PRODUCT_TEXT_MODEL_TIMEOUT"

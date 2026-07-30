@@ -145,3 +145,23 @@ def test_detail_contract_has_stable_types_for_every_public_state(status):
     assert body["messages"] == [] and body["steps"] == [] and body["revision_count"] == 0
     assert body["brief_summary"] is None and body["product_design"] is None and body["visual_direction"] is None
     assert body["error"] is None if status is not AgentSessionStatus.FAILED else body["error"]["code"] == "X"
+
+
+def test_product_design_projection_allow_lists_complete_agent_text_contract():
+    row = {
+        "id": "session-1", "status": "waiting_text_feedback", "current_stage": "waiting_text_feedback", "text_revision_count": 1,
+        "generation_log_id": None, "brief_json": None, "image_prompt_json": None, "error_json": None, "error_code": None,
+        "failure_stage": None, "created_at": datetime(2026, 7, 30, 12), "updated_at": datetime(2026, 7, 30, 12),
+        "confirmed_text_json": {"product_name": "环光灯", "design_concept": "现代", "cultural_translation": "环形转译",
+            "structure": "环形结构", "materials": "磨砂金属", "color_plan": "暖白", "usage_scene": "桌面",
+            "selling_points": ["轻巧"], "creative_origin": "纹样", "factual_background": "创意解读",
+            "evidence_status": "creative_only", "evidence": [], "used_source_ids": [], "selected_text_skill": "retail-product-copy",
+            "revision_summary": "调整材质", "provider_payload": {"never": "leak"}},
+    }
+    design = project_agent_session_detail(row, [], []).product_design.model_dump()
+    assert design == {
+        "product_name": "环光灯", "design_concept": "现代", "cultural_translation": "环形转译", "structure": "环形结构",
+        "materials": "磨砂金属", "color_plan": "暖白", "usage_scene": "桌面", "selling_points": ["轻巧"],
+        "creative_origin": "纹样", "factual_background": "创意解读", "evidence_status": "creative_only", "evidence": [],
+        "used_source_ids": [], "selected_text_skill": "retail-product-copy", "revision_summary": "调整材质",
+    }
