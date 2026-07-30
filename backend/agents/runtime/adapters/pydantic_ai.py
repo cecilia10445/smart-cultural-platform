@@ -10,6 +10,7 @@ from typing import Any
 from pydantic_ai import Agent, RunContext, UsageLimits
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.toolsets import FunctionToolset
+from openai import APITimeoutError, APIConnectionError
 
 from ..context import RuntimeContext
 from ..executor import ToolCallLedger, ToolExecutor
@@ -79,6 +80,10 @@ class PydanticAIRuntimeEngine:
             return self._failed(run_id, usage, trace, results, "MODEL_REQUEST_LIMIT_EXCEEDED", "budget_exceeded")
         except UnexpectedModelBehavior:
             return self._failed(run_id, usage, trace, results, "RUNTIME_MODEL_RESPONSE_INVALID", "run_failed")
+        except APITimeoutError:
+            return self._failed(run_id, usage, trace, results, "RUNTIME_MODEL_TIMEOUT", "run_failed")
+        except APIConnectionError:
+            return self._failed(run_id, usage, trace, results, "RUNTIME_PROVIDER_UNAVAILABLE", "run_failed")
         except Exception:
             return self._failed(run_id, usage, trace, results, "RUNTIME_EXECUTION_FAILED", "run_failed")
         usage.model_requests = result.usage.requests

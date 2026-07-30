@@ -76,8 +76,23 @@ def get_agent_dialogue_service() -> AgentDialogueService:
 
 
 def get_agent_runtime_turn_service():
-    """Provider injection boundary; no real model is enabled by default."""
-    return None
+    """Build the opt-in Runtime without changing legacy generation providers."""
+    from backend.agents.design_conversation import DesignConversationService, build_design_tool_registry
+    from backend.agents.runtime import ToolExecutor
+    from backend.agents.runtime.adapters import PydanticAIRuntimeEngine
+    from backend.agents.runtime.providers import RuntimeProviderError, build_runtime_model
+    from backend.services.agent_runtime_repository import AgentRuntimeRepository
+    from backend.services.agent_runtime_turn_service import AgentRuntimeTurnService
+    from backend.routes import api
+    try:
+        model = build_runtime_model()
+    except RuntimeProviderError:
+        return None
+    repository = AgentRuntimeRepository(api.mysql_service)
+    return AgentRuntimeTurnService(
+        repository,
+        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), repository.get_session),
+    )
 
 
 async def _payload(request: Request, model):
