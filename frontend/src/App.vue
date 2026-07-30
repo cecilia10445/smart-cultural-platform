@@ -27,12 +27,14 @@
             <p>写下主题和用途，再选择画面方向，让创作从一个清晰的想法开始。</p>
           </div>
 
-          <div class="creation-mode-switch" role="group" aria-label="创作模式">
-            <button type="button" :class="{ active: generationMode === 'fast' }" @click="generationMode = 'fast'">快速生成</button>
-            <button type="button" :class="{ active: generationMode === 'agent' }" @click="generationMode = 'agent'">协作式设计</button>
+          <div class="creation-mode-area">
+            <div class="creation-mode-switch" role="group" aria-label="创作模式">
+              <button type="button" :class="{ active: generationMode === 'fast' }" @click="generationMode = 'fast'">快速生成</button>
+              <button type="button" :class="{ active: generationMode === 'agent' }" @click="openNewAgentDesign">协作式设计</button>
+            </div>
           </div>
 
-          <AgentDesignPanel v-if="generationMode === 'agent'" />
+          <AgentDesignPanel v-if="generationMode === 'agent'" ref="agentPanel" :key="agentPanelKey" @return-to-history="switchTab('history')" />
 
           <form v-if="generationMode === 'fast'" class="creation-form" @submit.prevent="generateContent" novalidate>
             <div class="brief-grid">
@@ -237,6 +239,7 @@
                 </template>
                 <p v-else>{{ previewText(record.content || record.prompt, 110) }}</p>
                 <time>{{ formatDate(record.timestamp || record.generation_time) }}</time>
+                <p v-if="isAgentRecord(record)" class="text-skill-meta">记录编号：{{ record.log_id || '—' }}</p>
                 <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : (isAgentRecord(record) ? openAgentSession(record) : openDetail(record))">查看详情</button>
               </div>
             </article>
@@ -360,6 +363,7 @@ export default {
       historyError: '',
       historyLoaded: false,
       historyImageErrors: {},
+      agentPanelKey: 0,
       trendingStyles: [],
       trendingKeywords: [],
       recommendationLoading: false,
@@ -407,6 +411,19 @@ export default {
       this.activeTab = tab
       if (tab === 'history') this.loadHistory()
       if (tab === 'recommendations') this.loadRecommendations()
+    },
+    openNewAgentDesign() {
+      if (this.generationMode === 'agent' && this.activeTab === 'generate' && this.$refs.agentPanel) {
+        this.$refs.agentPanel.startNew()
+        return
+      }
+      const url = new URL(window.location.href)
+      url.searchParams.delete('agent_session_id')
+      url.searchParams.delete('view')
+      window.history.replaceState({}, '', url)
+      this.generationMode = 'agent'
+      this.activeTab = 'generate'
+      this.agentPanelKey += 1
     },
     authHeaders() {
       const token = localStorage.getItem('token')
@@ -679,8 +696,12 @@ export default {
       }
       const url = new URL(window.location.href)
       url.searchParams.set('agent_session_id', record.agent_session_id)
+      url.searchParams.set('view', 'history')
       url.searchParams.delete('tab')
-      window.location.assign(url.toString())
+      window.history.pushState({}, '', url)
+      this.generationMode = 'agent'
+      this.activeTab = 'generate'
+      this.agentPanelKey += 1
     },
     async openTextSkillDetail(record) {
       if (!record?.detail_url || record.artifact_integrity !== 'verified') {
@@ -957,12 +978,17 @@ button, input, select, textarea {
   color: #566057;
   line-height: 1.8;
 }
+.creation-mode-area {
+  max-width: 62rem;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #17221f;
+}
 .creation-form {
   max-width: 62rem;
   display: grid;
   gap: 1.7rem;
-  padding-top: 2rem;
-  border-top: 2px solid #17221f;
+  margin-top: 1.25rem;
+  padding-top: 0;
 }
 .field-block {
   min-width: 0;
