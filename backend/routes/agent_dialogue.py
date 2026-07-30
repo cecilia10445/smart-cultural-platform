@@ -89,9 +89,11 @@ def get_agent_runtime_turn_service():
     except RuntimeProviderError:
         return None
     repository = AgentRuntimeRepository(api.mysql_service)
+    def state_reader(user_id: str, session_id: str):
+        return repository.get_session(session_id, user_id)
     return AgentRuntimeTurnService(
         repository,
-        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), repository.get_session),
+        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), state_reader),
     )
 
 
