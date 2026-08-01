@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,7 +44,7 @@ class KnowledgeSource(BaseModel):
 
 class SearchCulturalKnowledgeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    status: str
+    status: Literal["matched", "creative_only", "needs_clarification"]
     reason: str
     sources: list[KnowledgeSource] = Field(default_factory=list)
 
@@ -114,7 +114,13 @@ def search_cultural_knowledge(context: RuntimeContext, value: SearchCulturalKnow
                                    evidence_summary="; ".join(f"{key}: {val}" for key, val in item.evidence.items())[:600])
                    for item in decision.results]
         _state_bucket(context).setdefault("retrieved_source_ids", set()).update(source.source_id for source in sources)
-        return SearchCulturalKnowledgeOutput(status=decision.status, reason=decision.reason, sources=sources)
+        if decision.status == "matched":
+            return SearchCulturalKnowledgeOutput(status="matched", reason=decision.reason, sources=sources)
+        # A low score or competing RAG matches limit evidence; they do not make
+        # an otherwise understandable design request ambiguous.
+        if _is_genuinely_ambiguous_query(value.query):
+            return SearchCulturalKnowledgeOutput(status="needs_clarification", reason="request_ambiguous", sources=[])
+        return SearchCulturalKnowledgeOutput(status="creative_only", reason="no_reliable_cultural_match", sources=[])
     except Exception:
         return SearchCulturalKnowledgeOutput(status="creative_only", reason="knowledge_unavailable", sources=[])
 
@@ -133,6 +139,7 @@ def load_design_skill(context: RuntimeContext, value: LoadDesignSkillInput) -> L
 
 
 def validate_design_constraints(context: RuntimeContext, value: ValidateDesignConstraintsInput) -> ValidateDesignConstraintsOutput:
+    """Validate a formal artifact candidate, never a normal conversation reply."""
     errors, warnings, missing = [], ["image_generation_requires_human_confirmation"], []
     try:
         normalized = validate_cultural_product_request({"brief_version": "1.0", "brief": value.candidate_brief})
@@ -157,13 +164,19 @@ def validate_design_constraints(context: RuntimeContext, value: ValidateDesignCo
                                            missing_fields=missing, requires_user_confirmation=True)
 
 
+def _is_genuinely_ambiguous_query(value: str) -> bool:
+    """Only label an input ambiguous when it has no usable subject at all."""
+    compact = "".join(value.split()).lower()
+    return not compact or compact in {"文化", "文创", "资料", "查资料", "查一下", "帮我查", "这个", "那个", "相关"}
+
+
 def build_design_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     common = frozenset({"design_conversation"})
     registry.register_many([
         ToolSpec("inspect_design_state", "Read an allow-list projection of the current design session.", InspectDesignStateInput, InspectDesignStateOutput, inspect_design_state, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 2),
-        ToolSpec("search_cultural_knowledge", "Search the approved cultural knowledge corpus once. If status is not matched, do not refine or retry the query: immediately return structured AskUser because no approved cultural evidence is available.", SearchCulturalKnowledgeInput, SearchCulturalKnowledgeOutput, search_cultural_knowledge, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 5, 2),
+        ToolSpec("search_cultural_knowledge", "Search the approved cultural knowledge corpus once. matched permits only returned source IDs as cultural evidence. creative_only means no reliable source is available: say so and continue ordinary design as a creative interpretation without citations. needs_clarification is reserved for a genuinely ambiguous request, never a failed search. Do not refine or retry the same query.", SearchCulturalKnowledgeInput, SearchCulturalKnowledgeOutput, search_cultural_knowledge, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 5, 2),
         ToolSpec("load_design_skill", "Load one versioned design guidance skill.", LoadDesignSkillInput, LoadDesignSkillOutput, load_design_skill, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 2),
-        ToolSpec("validate_design_constraints", "Validate one candidate brief before ProposeBrief. Pass the candidate brief plus only source IDs returned by search and skill IDs returned by load; valid=true means return the structured final result now.", ValidateDesignConstraintsInput, ValidateDesignConstraintsOutput, validate_design_constraints, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 1),
+        ToolSpec("validate_design_constraints", "Validate a candidate only before requesting a formal business action such as saving or applying an artifact. It is not required for ordinary discussion, research, critique, comparison, or a tentative ProposeBrief. Pass only source IDs returned by search and skill IDs returned by load.", ValidateDesignConstraintsInput, ValidateDesignConstraintsOutput, validate_design_constraints, ToolRisk.READ_ONLY, common, ALLOWED_STATUSES, 3, 1),
     ])
     return registry

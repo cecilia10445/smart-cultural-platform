@@ -272,6 +272,7 @@ class AgentMessageResponse(BaseModel):
     message_type: str
     text: str
     created_at: str
+    client_turn_id: str | None = None
     structured_output: dict[str, Any] | None = None
 
 
@@ -572,6 +573,51 @@ def _final_projection(value: Any, generation_log_id: int | None) -> FinalResultR
     )
 
 
+def _runtime_conversation_projection(value: Any) -> dict[str, Any] | None:
+    """Project both current natural replies and persisted legacy variants.
+
+    Runtime rows are append-only facts.  This presentation adapter makes older
+    ``result.kind`` payloads readable without rewriting them in MySQL.
+    """
+    raw = _json_object(value)
+    if isinstance(raw.get("message"), str) and raw["message"].strip():
+        return raw
+    result = _json_object(raw.get("result"))
+    kind = _text(result.get("kind"))
+    if not kind:
+        return None
+    if kind == "direct_answer":
+        return {"message": _text(result.get("answer")) or "设计助手已回复。",
+                "intent": _text(result.get("answer_kind")) or "general_answer", "suggestions": [],
+                "artifact_proposal": None, "business_action": None, "output_origin": "legacy_projection"}
+    if kind == "ask_user":
+        actions = _object_list(result.get("continuation_actions"))
+        return {"message": _text(result.get("question")) or _text(result.get("reason_summary")) or "请补充后继续。",
+                "intent": "clarification",
+                "suggestions": [{"label": _text(item.get("label")) or "继续讨论", "draft_text": None} for item in actions],
+                "artifact_proposal": None, "business_action": None, "output_origin": "legacy_projection"}
+    if kind == "propose_brief":
+        return {"message": _text(result.get("summary")) or "我已整理一版初步设计方案。", "intent": "brief_proposal", "suggestions": [],
+                "artifact_proposal": {"kind": "brief", "content": _json_object(result.get("brief")),
+                                      "summary": _text(result.get("summary")) or "初步设计方案", "assumptions": _text_list(result.get("assumptions")),
+                                      "evidence_source_ids": _text_list(result.get("evidence_source_ids")),
+                                      "used_skill_ids": _text_list(result.get("used_skill_ids")), "preserved_constraints": [], "saved": False, "valid": True},
+                "business_action": None, "output_origin": "legacy_projection"}
+    if kind == "propose_design_revision":
+        return {"message": _text(result.get("summary")) or "我已整理修订建议。", "intent": "design_revision", "suggestions": [],
+                "artifact_proposal": {"kind": "design_revision", "content": {"changes": _text_list(result.get("changes"))},
+                                      "summary": _text(result.get("summary")) or "设计修订建议", "assumptions": [],
+                                      "evidence_source_ids": [], "used_skill_ids": [],
+                                      "preserved_constraints": _text_list(result.get("preserved_constraints")), "saved": False, "valid": True},
+                "business_action": None, "output_origin": "legacy_projection"}
+    if kind == "request_business_action":
+        return {"message": _text(result.get("reason_summary")) or "这项操作需要你的确认。", "intent": "business_action_request", "suggestions": [],
+                "artifact_proposal": None,
+                "business_action": {"action": _text(result.get("action")), "reason_summary": _text(result.get("reason_summary"))},
+                "output_origin": "legacy_projection"}
+    return None
+
+
 def project_agent_session_detail(
     session_row: Mapping[str, Any],
     message_rows: list[Mapping[str, Any]] | None = None,
@@ -584,11 +630,9 @@ def project_agent_session_detail(
             role=AgentMessageRole(row.get("role") if row.get("role") in {item.value for item in AgentMessageRole} else "system"),
             message_type=_text(row.get("message_type")) or "system", text=_text(row.get("content_text")) or "",
             created_at=_iso(row.get("created_at")),
-            structured_output=(
-                _json_object(row.get("content_json")).get("output")
-                if row.get("message_type") == "runtime_result" and isinstance(_json_object(row.get("content_json")).get("output"), dict)
-                else None
-            ),
+            client_turn_id=_text(row.get("client_turn_id")),
+            structured_output=(_runtime_conversation_projection(_json_object(row.get("content_json")).get("output"))
+                               if row.get("message_type") == "runtime_result" else None),
         )
         for row in (message_rows or [])
     ]

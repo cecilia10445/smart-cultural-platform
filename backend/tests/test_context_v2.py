@@ -14,6 +14,36 @@ def test_budget_triggers_compression_without_mutating_messages():
  assert built['compression_triggered'] and len(built['recent_messages'])==10
 
 
+def test_context_persists_creative_continuation_and_design_completion_consent():
+ class ConsentRepo:
+  def get_detail_rows(self,*_):
+   return {'id':'s','status':'created'}, [{'id':'1','role':'user','content_text':'我选择继续按纯创意方向设计，其他你帮我设计。'}], []
+ payload=asyncio.run(RuntimeContextBuilder(ConsentRepo()).build('u','s','请继续'))
+ assert payload['creative_only_authorized'] is True
+ assert payload['design_completion_authorized'] is True
+
+
+def test_summary_range_never_skips_an_older_recent_message():
+ rows = [{'id': str(index), 'sequence_no': index} for index in range(2, 6)]
+ # Keeping message 2 for its priority must not summarize message 3 around it.
+ assert RuntimeContextBuilder._contiguous_summary_prefix(rows, {'2', '4', '5'}) == []
+ assert [row['sequence_no'] for row in RuntimeContextBuilder._contiguous_summary_prefix(rows, {'4', '5'})] == [2, 3]
+
+
+def test_rejected_summary_never_fails_the_user_turn_context_build():
+ class RejectingValidator:
+  def validate(self, *_): raise ValueError('derived_cache_rejected')
+ class CompressionRepo:
+  def get_detail_rows(self,*_):
+   return {'id':'s','status':'created'}, [{'id':str(i),'role':'user','content_text':'设计需求' * 40} for i in range(13)], []
+  def get_messages_after_summary(self,*_): return self.get_detail_rows()[1]
+  def create_summary_version(self,*_): raise AssertionError('invalid summary must not be stored')
+ payload=asyncio.run(RuntimeContextBuilder(CompressionRepo(), validator=RejectingValidator()).build('u','s','继续'))
+ assert payload['fallback_used'] is True
+ assert payload['compression_triggered'] is False
+ assert payload['context_summary'] is None
+
+
 class LongSessionRepo:
  def __init__(self): self.messages={}; self.summaries={}; self.versions={}
  def get_detail_rows(self, session_id, user_id):

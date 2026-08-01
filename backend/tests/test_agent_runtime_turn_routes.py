@@ -19,7 +19,7 @@ class FakeTurns:
         return self.run
     def get_safe_run_display(self, session, user, run):
         if (session, user, run) != ("s1", "U1", "run-1"): raise AgentSessionNotFound()
-        return {"id": "run-1", "status": "completed", "output": {"result": {"kind": "direct_answer", "answer": "ok"}}, "safe_tool_events": [], "context_metadata": {}}
+        return {"id": "run-1", "status": "completed", "output": {"message": "ok", "intent": "general_answer", "suggestions": [], "artifact_proposal": None, "business_action": None, "output_origin": "provider"}, "safe_tool_events": [], "context_metadata": {}, "rag": {"status": None, "summary": None}}
 
 
 def request(path, payload=None, owner="U1"):
@@ -42,6 +42,6 @@ def test_assistant_turn_route_is_owner_scoped_and_delegates_to_injected_service(
     foreign = asyncio.run(routes.assistant_turn("s1", request("/", {"content": "hello", "client_turn_id": "turn"}, "other")))
     read = asyncio.run(routes.get_assistant_turn("s1", "run-1", request("/")))
     assert body(first)["data"]["run"]["id"] == "run-1"
-    assert body(first)["data"]["display"]["output"]["result"]["kind"] == "direct_answer"
+    assert body(first)["data"]["display"]["output"]["message"] == "ok"
     assert body(replay)["data"]["replayed"] is True
     assert foreign.status_code == 404 and body(read)["data"]["id"] == "run-1"

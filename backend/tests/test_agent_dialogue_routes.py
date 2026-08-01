@@ -77,6 +77,21 @@ def response_json(response):
     return json.loads(response.body)
 
 
+def test_persisted_legacy_runtime_output_projects_to_a_natural_reply():
+    detail = project_agent_session_detail(
+        {"id": "s1", "status": "created", "current_stage": "created"},
+        [{"id": "m1", "sequence_no": 1, "role": "assistant", "message_type": "runtime_result",
+          "content_text": "旧版摘要", "created_at": datetime(2026, 8, 1),
+          "content_json": json.dumps({"output": {"result": {"kind": "propose_brief", "brief": {"product_type": "杯垫"},
+              "summary": "旧版初步方案", "assumptions": [], "evidence_source_ids": [], "used_skill_ids": []}}})}],
+        [],
+    )
+    reply = detail.messages[0].structured_output
+    assert reply["message"] == "旧版初步方案"
+    assert reply["artifact_proposal"]["kind"] == "brief"
+    assert reply["output_origin"] == "legacy_projection"
+
+
 def test_routes_require_jwt_and_return_stable_success_envelope(agent_client):
     application, _service = agent_client
     from backend.routes.agent_dialogue import create_session

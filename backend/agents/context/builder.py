@@ -99,7 +99,11 @@ class RuntimeContextBuilder:
         recent = self._select_recent(messages, previous, current_input)
         recent_ids = {str(row["id"]) for row in recent}
         after_previous = self.repository.get_messages_after_summary(user_id, session_id, previous.source_message_end_id if previous else None) if hasattr(self.repository, "get_messages_after_summary") else messages
-        to_summarize = [row for row in after_previous if str(row["id"]) not in recent_ids]
+        # A summary source range must always be a contiguous prefix. Recent
+        # priority retention can intentionally keep an older confirmation; do
+        # not summarize a later row around it, or source count/end validation
+        # would correctly reject the derived range.
+        to_summarize = self._contiguous_summary_prefix(after_previous, recent_ids)
         triggered = before > self.budget.compression_trigger_tokens or len(messages) > self.budget.compression_trigger_messages
         metadata = {"summary_id": active.get("id") if isinstance(active, dict) else None,
                     "summary_version": active.get("session_version") if isinstance(active, dict) else None,
@@ -114,22 +118,35 @@ class RuntimeContextBuilder:
                 candidate = await self.summarizer.summarize(previous, to_summarize, session, scope)
                 summary = self.validator.validate(candidate, previous, scope)
             except Exception as error:
-                summary = await self.fallback.summarize(previous, to_summarize, session, scope)
-                # The fallback is generated from the same closed set, and is validated too.
-                summary = self.validator.validate(summary, previous, scope)
-                metadata.update(fallback_used=True, validation_warnings=[f"context_summary_fallback:{type(error).__name__}"])
-            record = (self.repository.create_summary_version(user_id, session_id, summary)
-                      if hasattr(self.repository, "create_summary_version") else {})
-            previous = summary
-            metadata.update(summary_id=record.get("id"), summary_version=record.get("session_version"),
-                            compression_triggered=True, compression_reason=reason,
-                            messages_summarized=len(to_summarize))
-            # Re-select so a just-compressed prefix is not needlessly duplicated.
-            recent = self._select_recent(messages, previous, current_input)
-            metadata["recent_messages_included"] = len(recent)
+                try:
+                    summary = await self.fallback.summarize(previous, to_summarize, session, scope)
+                    # The fallback is generated from the same closed set, and is validated too.
+                    summary = self.validator.validate(summary, previous, scope)
+                except Exception as fallback_error:
+                    # Context is derived cache data. A rejected candidate must
+                    # never turn a user turn into an HTTP failure; retain the
+                    # previous validated summary and continue with raw recent
+                    # messages instead.
+                    metadata.update(fallback_used=True, validation_warnings=[
+                        f"context_summary_discarded:{type(error).__name__}",
+                        f"context_fallback_discarded:{type(fallback_error).__name__}",
+                    ])
+                    to_summarize = []
+                    summary = previous
+            if to_summarize and summary is not None:
+                record = (self.repository.create_summary_version(user_id, session_id, summary)
+                          if hasattr(self.repository, "create_summary_version") else {})
+                previous = summary
+                metadata.update(summary_id=record.get("id"), summary_version=record.get("session_version"),
+                                compression_triggered=True, compression_reason=reason,
+                                messages_summarized=len(to_summarize))
+                # Re-select so a just-compressed prefix is not needlessly duplicated.
+                recent = self._select_recent(messages, previous, current_input)
+                metadata["recent_messages_included"] = len(recent)
         estimated_after = estimate_tokens(previous.model_dump(mode="json")) if previous else 0
         estimated_after += estimate_tokens([_safe_message(row) for row in recent]) + estimate_tokens(current_input)
         metadata["estimated_tokens_after"] = estimated_after
+        permissions = _conversation_permissions(messages, current_input)
         return {"session_state": _safe_session_state(session),
                 "context_summary": previous.model_dump(mode="json") if previous else None,
                 "recent_messages": [_safe_message(row) for row in recent], "current_user_input": current_input,
@@ -137,6 +154,9 @@ class RuntimeContextBuilder:
                 "confirmed_constraints": [item.model_dump(mode="json") for item in (previous.confirmed_constraints if previous else [])],
                 "tentative_preferences": [item.model_dump(mode="json") for item in (previous.tentative_preferences if previous else [])],
                 "rejected_directions": [item.model_dump(mode="json") for item in (previous.rejected_directions if previous else [])],
+                # Derived only from this Session's persisted user messages and
+                # current input. This is not cross-session memory or evidence.
+                **permissions,
                 **metadata}
 
     def _select_recent(self, messages, summary, current_input):
@@ -156,6 +176,13 @@ class RuntimeContextBuilder:
                 break
         selected.reverse()
         return selected
+
+    @staticmethod
+    def _contiguous_summary_prefix(after_previous, recent_ids):
+        for index, row in enumerate(after_previous):
+            if str(row["id"]) in recent_ids:
+                return after_previous[:index]
+        return list(after_previous)
 
     def _scope(self, session_id, messages, session, steps):
         source_ids, skill_ids = set(), set()
@@ -193,3 +220,19 @@ def _safe_session_state(session):
 def _current_artifacts(session):
     if session.get("confirmed_text_json") is None: return []
     return [{"kind": "confirmed_text", "version": session.get("text_revision_count", 0)}]
+
+
+def _conversation_permissions(messages: list[dict[str, Any]], current_input: str) -> dict[str, bool]:
+    """Derive durable in-session creative consent from explicit user language."""
+    values = [str(row.get("content_text", "")) for row in messages if row.get("role") == "user"]
+    values.append(str(current_input or ""))
+    normalized = "\n".join(values).replace(" ", "")
+    negative_creative = ("不要按纯创意", "不按纯创意", "必须有可靠文化出处", "必须提供文化出处")
+    creative_only_authorized = (not any(token in normalized for token in negative_creative) and any(
+        token in normalized for token in ("继续按纯创意", "继续纯创意", "按纯创意方向继续", "不需要可靠文化出处", "无需可靠文化出处", "不用文化出处")
+    ))
+    design_completion_authorized = any(
+        token in normalized for token in ("其他你帮我设计", "其他由你设计", "其余你帮我设计", "剩下你帮我设计")
+    )
+    return {"creative_only_authorized": creative_only_authorized,
+            "design_completion_authorized": design_completion_authorized}

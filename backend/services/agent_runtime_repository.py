@@ -150,6 +150,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
                     context_metadata = {key: value[key] for key in (
                         "summary_version", "compression_triggered", "compression_reason", "estimated_tokens_before",
                         "estimated_tokens_after", "messages_summarized", "recent_messages_included", "fallback_used",
+                        "rag_status", "rag_summary", "final_output_origin",
                     ) if key in value}
             if event.get("event_type") in {"tool_completed", "tool_semantic_replayed"} and event.get("success") in (True, 1):
                 name = event.get("tool_name")
@@ -158,7 +159,12 @@ class AgentRuntimeRepository(AgentDialogueRepository):
         return {
             "id": run["id"], "status": run.get("status"), "final_output_type": run.get("final_output_type"),
             "output": final if isinstance(final, dict) else None,
-            "safe_tool_events": tool_names, "context_metadata": context_metadata,
+            "retryable": run.get("status") == "failed" and run.get("error_code") in {
+                "RUNTIME_OUTPUT_REPAIR_INVALID", "RUNTIME_MODEL_TIMEOUT", "RUNTIME_PROVIDER_UNAVAILABLE",
+            },
+            "safe_tool_events": tool_names, "context_metadata": {key: value for key, value in context_metadata.items()
+                                                                      if key not in {"rag_status", "rag_summary"}},
+            "rag": {"status": context_metadata.get("rag_status"), "summary": context_metadata.get("rag_summary")},
         }
 
     def complete_run(self, run: dict[str, Any], result, user_content: str, assistant_text: str, assistant_json: dict[str, Any]) -> dict[str, Any]:
@@ -175,7 +181,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             cursor.execute("""UPDATE agent_runtime_runs SET status=%s,model_request_count=%s,tool_call_count=%s,final_output_type=%s,
                 final_output_json=%s,pending_approval_json=%s,error_code=%s,error_summary=%s,completed_at=%s WHERE id=%s""",
                 (status, result.usage.model_requests, result.usage.requested_tool_calls,
-                 (final or {}).get("result", final or {}).get("kind") if final else None, self._json(final),
+                 ((final or {}).get("intent") or (final or {}).get("result", final or {}).get("kind")) if final else None, self._json(final),
                  self._json(result.pending_approval.model_dump() if result.pending_approval else None),
                  error.get("code") if error else None, error.get("message") if error else None, now, run["id"]))
             cursor.execute("SELECT COALESCE(MAX(sequence_no),0)+1 AS n FROM agent_messages WHERE session_id=%s", (run["session_id"],))

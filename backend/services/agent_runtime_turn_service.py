@@ -20,13 +20,17 @@ class AgentRuntimeTurnService:
             context_payload = await self.context_builder.build(user_id, session_id, content)
         result = await (self.design_service.run_turn(user_id, session_id, content, context_payload)
                         if context_payload else self.design_service.run_turn(user_id, session_id, content))
-        result.context_metadata = {key: value for key, value in context_payload.items()
-                                   if key in {"summary_id", "summary_version", "compression_triggered", "compression_reason",
-                                              "estimated_tokens_before", "estimated_tokens_after", "messages_summarized",
-                                              "recent_messages_included", "summarizer_type", "fallback_used", "validation_warnings"}}
+        result.context_metadata = {**getattr(result, "context_metadata", {}), **{
+            key: value for key, value in context_payload.items()
+            if key in {"summary_id", "summary_version", "compression_triggered", "compression_reason",
+                       "estimated_tokens_before", "estimated_tokens_after", "messages_summarized",
+                       "recent_messages_included", "summarizer_type", "fallback_used", "validation_warnings"}
+        }}
         final = result.final_output or {}
+        # New turns persist ConversationReply directly. The legacy branch keeps
+        # a replayable row from previous Runtime releases readable.
         visible = final.get("result", final)
-        kind = visible.get("kind", "runtime_result") if isinstance(visible, dict) else "runtime_result"
-        text = visible.get("answer") or visible.get("question") or visible.get("summary") or visible.get("reason_summary") or kind
+        kind = visible.get("kind", final.get("intent", "runtime_result")) if isinstance(visible, dict) else "runtime_result"
+        text = final.get("message") or (visible.get("answer") or visible.get("question") or visible.get("summary") or visible.get("reason_summary") or kind)
         persisted = self.repository.complete_run(run, result, content, str(text), {"runtime_run_id": run["id"], "output": final})
         return persisted, False
