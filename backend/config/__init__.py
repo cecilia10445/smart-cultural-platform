@@ -40,6 +40,11 @@ class Settings:
     dashscope_text_read_timeout_seconds: int
     dashscope_image_connect_timeout_seconds: int
     dashscope_image_read_timeout_seconds: int
+    agent_runtime_provider: str
+    agent_runtime_model: str
+    agent_runtime_base_url: str
+    agent_runtime_allow_real_model: bool
+    agent_runtime_timeout_seconds: int
     mysql_host: str
     mysql_port: int
     mysql_user: str
@@ -80,6 +85,11 @@ def load_settings():
         dashscope_text_read_timeout_seconds=_int_env("DASHSCOPE_TEXT_READ_TIMEOUT_SECONDS", 120),
         dashscope_image_connect_timeout_seconds=_int_env("DASHSCOPE_IMAGE_CONNECT_TIMEOUT_SECONDS", 5),
         dashscope_image_read_timeout_seconds=_int_env("DASHSCOPE_IMAGE_READ_TIMEOUT_SECONDS", 30),
+        agent_runtime_provider=os.getenv("AGENT_RUNTIME_PROVIDER", "dashscope").strip().lower(),
+        agent_runtime_model=os.getenv("AGENT_RUNTIME_MODEL", os.getenv("DASHSCOPE_TEXT_MODEL", "qwen3.7-plus")).strip(),
+        agent_runtime_base_url=os.getenv("AGENT_RUNTIME_BASE_URL", os.getenv("DASHSCOPE_OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")).rstrip("/"),
+        agent_runtime_allow_real_model=_bool_env("AGENT_RUNTIME_ALLOW_REAL_MODEL", False),
+        agent_runtime_timeout_seconds=_int_env("AGENT_RUNTIME_TIMEOUT_SECONDS", 60),
         mysql_host=os.getenv("MYSQL_HOST", "localhost"),
         mysql_port=_int_env("MYSQL_PORT", 3306),
         mysql_user=os.getenv("MYSQL_USER", "root"),

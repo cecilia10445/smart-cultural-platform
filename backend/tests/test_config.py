@@ -14,6 +14,8 @@ def test_dashscope_connection_and_read_timeouts_are_independent(monkeypatch):
     assert (defaults.dashscope_text_connect_timeout_seconds, defaults.dashscope_text_read_timeout_seconds) == (5, 120)
     assert (defaults.dashscope_image_connect_timeout_seconds, defaults.dashscope_image_read_timeout_seconds) == (5, 30)
     assert defaults.dashscope_text_reasoning_effort == "none"
+    assert defaults.agent_runtime_allow_real_model is False
+    assert defaults.agent_runtime_provider == "dashscope"
     assert (
         defaults.mysql_pool_size,
         defaults.mysql_pool_max_overflow,

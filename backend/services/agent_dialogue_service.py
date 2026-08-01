@@ -19,6 +19,7 @@ from backend.domain.agent_dialogue import (
     AgentImagePersistenceFailed,
     TextRevisionLimitReached,
     project_agent_session_detail,
+    project_agent_session_list_item,
 )
 from backend.services.agent_dialogue_repository import AgentDialogueRepository
 from backend.services.agent_brief_agent import BriefAgent
@@ -53,6 +54,9 @@ class AgentDialogueService:
 
     def get_session(self, session_id: str, user_id: str) -> AgentSessionDetailResponse:
         return self._detail(session_id, user_id)
+
+    def list_sessions(self, user_id: str):
+        return [project_agent_session_list_item(row) for row in self.repository.list_sessions(user_id)]
 
     def append_message(
         self, session_id: str, user_id: str, *, text: str, client_turn_id: str,
