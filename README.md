@@ -420,6 +420,8 @@ npm run test:e2e
 - API Key、完整 Provider 原始响应、内部 Tool Observation 与隐藏 Chain-of-Thought 不进入用户可见 DTO、Artifact 或 Action Trace；
 - 图片外部结果不确定时阻止自动重试，等待明确恢复处理，避免重复费用与重复产物。
 
-## 适用岗位方向
+## 当前项目边界与改进方向
 
-该项目集中体现 AI Agent 应用开发、Agent Runtime、AI 应用工程、后端 / 全栈 Agent 工程所需要的实践能力：结构化输出与 Prompt 合同、Function Calling、工具策略、RAG 证据边界、状态与数据建模、可审批副作用、幂等与事务、Provider Adapter、可观测性，以及面向真实用户流程的 Vue + FastAPI 全栈交付。
+平台聚焦文创设计场景中的持续对话、受控工具调用、正式设计产物沉淀与需确认的生成动作。它以 Conversation、Design Task、Artifact、Action 和 Runtime Run 的分层合同支撑多轮协作，并保留快速生成与既有历史能力。
+
+在这一边界内，后续可以围绕更丰富的文化资料覆盖、更多可配置的设计 Skill、Provider 结果恢复体验和端到端可观测性继续增强；这些演进保持在现有的 Task-scoped Context、Human-in-the-loop 与追加式生成记录边界之内，不改变正式产物可追溯、用户确认副作用和图片版本保留的核心原则。
