@@ -21,7 +21,7 @@ class ContextSummarizer(Protocol):
 class DeterministicContextSummarizer:
     """Conservative fallback.  It only copies statements which are explicit in rows."""
     async def summarize(self, previous_summary, messages, session_state, validation_scope=None):
-        summary = previous_summary.model_copy(deep=True) if previous_summary else ContextSummaryV2(session_id=str(session_state["id"]))
+        summary = previous_summary.model_copy(deep=True) if previous_summary else ContextSummaryV2(session_id=str(session_state["id"]), task_id=session_state.get("task_id"))
         if messages:
             summary.source_message_start_id = summary.source_message_start_id or str(messages[0]["id"])
             summary.source_message_end_id = str(messages[-1]["id"])
@@ -91,14 +91,21 @@ class RuntimeContextBuilder:
         self.validator = validator or ContextSummaryValidator(self.budget)
         self.fallback = DeterministicContextSummarizer()
 
-    async def build(self, user_id, session_id, current_input):
+    async def build(self, user_id, session_id, current_input, task_id=None):
         session, messages, steps = self.repository.get_detail_rows(session_id, user_id)
-        active = self.repository.get_active_summary(user_id, session_id) if hasattr(self.repository, "get_active_summary") else None
+        messages = [row for row in messages if row.get("task_id") == task_id]
+        if hasattr(self.repository, "get_active_summary"):
+            try: active = self.repository.get_active_summary(user_id, session_id, task_id=task_id)
+            except TypeError: active = self.repository.get_active_summary(user_id, session_id)
+        else: active = None
         previous = _summary_from_record(active)
         before = estimate_tokens(messages) + estimate_tokens(current_input)
         recent = self._select_recent(messages, previous, current_input)
         recent_ids = {str(row["id"]) for row in recent}
-        after_previous = self.repository.get_messages_after_summary(user_id, session_id, previous.source_message_end_id if previous else None) if hasattr(self.repository, "get_messages_after_summary") else messages
+        if hasattr(self.repository, "get_messages_after_summary"):
+            try: after_previous = self.repository.get_messages_after_summary(user_id, session_id, previous.source_message_end_id if previous else None, task_id=task_id)
+            except TypeError: after_previous = self.repository.get_messages_after_summary(user_id, session_id, previous.source_message_end_id if previous else None)
+        else: after_previous = messages
         # A summary source range must always be a contiguous prefix. Recent
         # priority retention can intentionally keep an older confirmation; do
         # not summarize a later row around it, or source count/end validation
@@ -115,11 +122,12 @@ class RuntimeContextBuilder:
             reason = "token_budget" if before > self.budget.compression_trigger_tokens else "message_budget"
             scope = self._scope(session_id, messages, session, steps)
             try:
-                candidate = await self.summarizer.summarize(previous, to_summarize, session, scope)
+                session_for_scope = {**session, "task_id": task_id}
+                candidate = await self.summarizer.summarize(previous, to_summarize, session_for_scope, scope)
                 summary = self.validator.validate(candidate, previous, scope)
             except Exception as error:
                 try:
-                    summary = await self.fallback.summarize(previous, to_summarize, session, scope)
+                    summary = await self.fallback.summarize(previous, to_summarize, session_for_scope, scope)
                     # The fallback is generated from the same closed set, and is validated too.
                     summary = self.validator.validate(summary, previous, scope)
                 except Exception as fallback_error:
@@ -134,8 +142,10 @@ class RuntimeContextBuilder:
                     to_summarize = []
                     summary = previous
             if to_summarize and summary is not None:
-                record = (self.repository.create_summary_version(user_id, session_id, summary)
-                          if hasattr(self.repository, "create_summary_version") else {})
+                if hasattr(self.repository, "create_summary_version"):
+                    try: record = self.repository.create_summary_version(user_id, session_id, summary, task_id=task_id)
+                    except TypeError: record = self.repository.create_summary_version(user_id, session_id, summary)
+                else: record = {}
                 previous = summary
                 metadata.update(summary_id=record.get("id"), summary_version=record.get("session_version"),
                                 compression_triggered=True, compression_reason=reason,
@@ -147,7 +157,11 @@ class RuntimeContextBuilder:
         estimated_after += estimate_tokens([_safe_message(row) for row in recent]) + estimate_tokens(current_input)
         metadata["estimated_tokens_after"] = estimated_after
         permissions = _conversation_permissions(messages, current_input)
-        return {"session_state": _safe_session_state(session),
+        state = _safe_session_state(session)
+        if task_id:
+            state["task_id"] = task_id
+            state["current_artifacts"] = self._task_artifacts(user_id, session_id, task_id)
+        return {"session_state": state,
                 "context_summary": previous.model_dump(mode="json") if previous else None,
                 "recent_messages": [_safe_message(row) for row in recent], "current_user_input": current_input,
                 "unresolved_questions": [item.model_dump(mode="json") for item in (previous.unresolved_questions if previous else [])],
@@ -158,6 +172,20 @@ class RuntimeContextBuilder:
                 # current input. This is not cross-session memory or evidence.
                 **permissions,
                 **metadata}
+
+    def _task_artifacts(self, user_id, session_id, task_id):
+        if hasattr(self.repository, "get_task_context_artifacts"):
+            return self.repository.get_task_context_artifacts(user_id, session_id, task_id)
+        if not hasattr(self.repository, "list_artifacts"):
+            return []
+        try:
+            artifacts = self.repository.list_artifacts(user_id, session_id, task_id)
+            latest = {}
+            for artifact in artifacts:
+                if artifact.status.value == "confirmed": latest[artifact.artifact_type.value] = {"id": artifact.id, "kind": artifact.artifact_type.value, "version": artifact.version_number}
+            return list(latest.values())
+        except Exception:
+            return []
 
     def _select_recent(self, messages, summary, current_input):
         # Walk backward within the budget. Important user language is preferentially retained.

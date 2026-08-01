@@ -10,14 +10,24 @@ from backend.services.agent_dialogue_repository import AgentDialogueRepository
 
 
 class AgentRuntimeRepository(AgentDialogueRepository):
+    def get_task_context_artifacts(self, user_id: str, session_id: str, task_id: str) -> list[dict[str, Any]]:
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("""SELECT id,artifact_type,version_number FROM agent_artifacts
+                WHERE user_id=%s AND session_id=%s AND task_id=%s AND status='confirmed'
+                ORDER BY artifact_type,version_number DESC""", (user_id,session_id,task_id))
+            rows=[dict(row) for row in cursor.fetchall() if isinstance(row,dict)]
+        latest={}
+        for row in rows: latest.setdefault(row["artifact_type"], {"id":row["id"],"kind":row["artifact_type"],"version":row["version_number"]})
+        return list(latest.values())
     # Context summaries are derived data.  They live in their own table and do
     # not modify the append-only agent_messages fact log.
-    def get_active_summary(self, user_id: str, session_id: str) -> dict[str, Any] | None:
+    def get_active_summary(self, user_id: str, session_id: str, task_id: str | None = None) -> dict[str, Any] | None:
         with self._transaction() as cursor:
             self._locked_owned_session(cursor, session_id, user_id)
             cursor.execute("""SELECT * FROM agent_context_summaries
-                WHERE user_id=%s AND session_id=%s AND status='active'
-                ORDER BY session_version DESC LIMIT 1""", (user_id, session_id))
+                WHERE user_id=%s AND session_id=%s AND scope_key=%s AND status='active'
+                ORDER BY session_version DESC LIMIT 1""", (user_id, session_id, f"task:{task_id}" if task_id else f"session:{session_id}"))
             row = self._fetchone(cursor)
         return self._summary_row(row)
 
@@ -29,7 +39,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             rows = [self._summary_row(dict(row)) for row in cursor.fetchall() if isinstance(row, dict)]
         return rows
 
-    def create_summary_version(self, user_id: str, session_id: str, summary) -> dict[str, Any]:
+    def create_summary_version(self, user_id: str, session_id: str, summary, task_id: str | None = None) -> dict[str, Any]:
         """Insert and activate a version under the session row lock.
 
         The small transaction makes the old/new active state atomic even when
@@ -37,18 +47,19 @@ class AgentRuntimeRepository(AgentDialogueRepository):
         """
         now, summary_id = self._now(), str(uuid.uuid4())
         payload = summary.model_dump(mode="json") if hasattr(summary, "model_dump") else dict(summary)
+        scope_key, scope_type = (f"task:{task_id}", "task") if task_id else (f"session:{session_id}", "session")
         with self._transaction() as cursor:
             self._locked_owned_session(cursor, session_id, user_id)
-            cursor.execute("SELECT COALESCE(MAX(session_version),0)+1 AS n FROM agent_context_summaries WHERE user_id=%s AND session_id=%s FOR UPDATE", (user_id, session_id))
+            cursor.execute("SELECT COALESCE(MAX(session_version),0)+1 AS n FROM agent_context_summaries WHERE user_id=%s AND session_id=%s AND scope_key=%s FOR UPDATE", (user_id, session_id, scope_key))
             version = int((self._fetchone(cursor) or {}).get("n") or 1)
-            cursor.execute("UPDATE agent_context_summaries SET status='inactive',updated_at=%s WHERE user_id=%s AND session_id=%s AND status='active'", (now, user_id, session_id))
+            cursor.execute("UPDATE agent_context_summaries SET status='inactive',updated_at=%s WHERE user_id=%s AND session_id=%s AND scope_key=%s AND status='active'", (now, user_id, session_id, scope_key))
             cursor.execute("""INSERT INTO agent_context_summaries
                 (id,user_id,session_id,schema_version,summary_json,source_message_start_id,source_message_end_id,
-                 source_message_count,session_version,status,created_at,updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'active',%s,%s)""",
+                 source_message_count,session_version,status,scope_type,scope_key,created_at,updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'active',%s,%s,%s,%s)""",
                 (summary_id, user_id, session_id, payload.get("schema_version", "context-summary-v2"), self._json(payload),
                  payload.get("source_message_start_id"), payload.get("source_message_end_id"), int(payload.get("source_message_count", 0)),
-                 version, now, now))
+                 version, scope_type, scope_key, now, now))
             cursor.execute("SELECT * FROM agent_context_summaries WHERE id=%s AND user_id=%s AND session_id=%s", (summary_id, user_id, session_id))
             row = self._fetchone(cursor)
         return self._summary_row(row) or {}
@@ -68,7 +79,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             row = self._fetchone(cursor)
         return self._summary_row(row) or {}
 
-    def get_messages_after_summary(self, user_id: str, session_id: str, source_message_end_id: str | None) -> list[dict[str, Any]]:
+    def get_messages_after_summary(self, user_id: str, session_id: str, source_message_end_id: str | None, task_id: str | None = None) -> list[dict[str, Any]]:
         """Return source rows after a summary boundary without assuming UUID order."""
         with self._transaction() as cursor:
             self._locked_owned_session(cursor, session_id, user_id)
@@ -77,9 +88,11 @@ class AgentRuntimeRepository(AgentDialogueRepository):
                 boundary = self._fetchone(cursor)
                 if boundary is None:
                     return []
-                cursor.execute("SELECT * FROM agent_messages WHERE session_id=%s AND sequence_no>%s ORDER BY sequence_no ASC", (session_id, boundary["sequence_no"]))
+                condition, values = ("task_id=%s", (task_id,)) if task_id else ("task_id IS NULL", ())
+                cursor.execute(f"SELECT * FROM agent_messages WHERE session_id=%s AND sequence_no>%s AND {condition} ORDER BY sequence_no ASC", (session_id, boundary["sequence_no"], *values))
             else:
-                cursor.execute("SELECT * FROM agent_messages WHERE session_id=%s ORDER BY sequence_no ASC", (session_id,))
+                condition, values = ("task_id=%s", (task_id,)) if task_id else ("task_id IS NULL", ())
+                cursor.execute(f"SELECT * FROM agent_messages WHERE session_id=%s AND {condition} ORDER BY sequence_no ASC", (session_id, *values))
             return [dict(row) for row in cursor.fetchall() if isinstance(row, dict)]
 
     @staticmethod
@@ -91,19 +104,31 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             value = json.loads(value)
         row["summary"] = value
         return row
-    def create_or_get_run(self, session_id: str, user_id: str, client_turn_id: str, agent_name: str) -> tuple[dict[str, Any], bool]:
+    def create_or_get_run(self, session_id: str, user_id: str, client_turn_id: str, agent_name: str, task_id: str | None = None) -> tuple[dict[str, Any], bool]:
         now = self._now()
         with self._transaction() as cursor:
             session = self._locked_owned_session(cursor, session_id, user_id)
+            resolved_task_id = task_id if task_id is not None else session.get("active_task_id")
+            if resolved_task_id:
+                cursor.execute("SELECT status FROM agent_design_tasks WHERE id=%s AND user_id=%s AND session_id=%s FOR UPDATE", (resolved_task_id, user_id, session_id)); task = self._fetchone(cursor)
+                if task is None:
+                    from backend.domain.agent_design_domain import DesignTaskNotFound
+                    raise DesignTaskNotFound()
+                if task.get("status") == "closed":
+                    from backend.domain.agent_design_domain import DesignTaskScopeConflict
+                    raise DesignTaskScopeConflict("Closed design tasks cannot receive assistant turns.")
             cursor.execute("SELECT * FROM agent_runtime_runs WHERE user_id=%s AND session_id=%s AND client_turn_id=%s", (user_id, session_id, client_turn_id))
             existing = self._fetchone(cursor)
             if existing:
+                if existing.get("task_id") != resolved_task_id:
+                    from backend.domain.agent_dialogue import RuntimeTurnIdempotencyConflict
+                    raise RuntimeTurnIdempotencyConflict()
                 return existing, True
             run_id = str(uuid.uuid4())
             cursor.execute("""INSERT INTO agent_runtime_runs
-                (id,user_id,session_id,client_turn_id,agent_name,status,session_status_at_start,model_request_count,tool_call_count,created_at)
-                VALUES (%s,%s,%s,%s,%s,'running',%s,0,0,%s)""",
-                (run_id, user_id, session_id, client_turn_id, agent_name, session["status"], now))
+                (id,user_id,session_id,task_id,client_turn_id,agent_name,status,session_status_at_start,model_request_count,tool_call_count,created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,'running',%s,0,0,%s)""",
+                (run_id, user_id, session_id, resolved_task_id, client_turn_id, agent_name, session["status"], now))
             cursor.execute("SELECT * FROM agent_runtime_runs WHERE id=%s", (run_id,))
             return self._fetchone(cursor), False
 
@@ -186,8 +211,8 @@ class AgentRuntimeRepository(AgentDialogueRepository):
                  error.get("code") if error else None, error.get("message") if error else None, now, run["id"]))
             cursor.execute("SELECT COALESCE(MAX(sequence_no),0)+1 AS n FROM agent_messages WHERE session_id=%s", (run["session_id"],))
             n = int((self._fetchone(cursor) or {}).get("n") or 1)
-            cursor.execute("INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,client_turn_id,created_at) VALUES (%s,%s,%s,'user','runtime_request',%s,NULL,%s,%s)", (str(uuid.uuid4()),run["session_id"],n,user_content,run["client_turn_id"],now))
-            cursor.execute("INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at) VALUES (%s,%s,%s,'assistant','runtime_result',%s,%s,%s)", (str(uuid.uuid4()),run["session_id"],n+1,assistant_text,self._json(assistant_json),now))
+            cursor.execute("INSERT INTO agent_messages (id,session_id,task_id,sequence_no,role,message_type,content_text,content_json,client_turn_id,created_at) VALUES (%s,%s,%s,%s,'user','runtime_request',%s,NULL,%s,%s)", (str(uuid.uuid4()),run["session_id"],run.get("task_id"),n,user_content,run["client_turn_id"],now))
+            cursor.execute("INSERT INTO agent_messages (id,session_id,task_id,sequence_no,role,message_type,content_text,content_json,created_at) VALUES (%s,%s,%s,%s,'assistant','runtime_result',%s,%s,%s)", (str(uuid.uuid4()),run["session_id"],run.get("task_id"),n+1,assistant_text,self._json(assistant_json),now))
             cursor.execute("UPDATE agent_sessions SET updated_at=%s WHERE id=%s AND user_id=%s", (now, run["session_id"], run["user_id"]))
             for record in result.traces:
                 item = record.model_dump(mode="json")

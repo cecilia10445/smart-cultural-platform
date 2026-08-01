@@ -133,6 +133,13 @@ class ActionStateConflict(AgentDesignDomainError):
 class ActionApprovalIdempotencyConflict(AgentDesignDomainError):
     code = "ACTION_APPROVAL_IDEMPOTENCY_CONFLICT"; status_code = 409; message = "Approval idempotency key was reused with different confirmation details."
 
+class ActionExecutionIdempotencyConflict(AgentDesignDomainError):
+    code = "ACTION_EXECUTION_IDEMPOTENCY_CONFLICT"; status_code = 409; message = "Execution idempotency key was reused with a different request."
+class ActionExecutorNotAvailable(AgentDesignDomainError):
+    code = "ACTION_EXECUTOR_NOT_AVAILABLE"; status_code = 409; message = "This action executor is not available yet."
+class ActionProposalContentIncomplete(AgentDesignDomainError):
+    code = "ACTION_PROPOSAL_CONTENT_INCOMPLETE"; status_code = 422; message = "The approved action does not contain complete artifact content."
+
 
 def assert_task_transition(source: DesignTaskStatus, target: DesignTaskStatus) -> None:
     if target not in TASK_TRANSITIONS[source]:
@@ -183,6 +190,9 @@ class ActionRecord(BaseModel):
     approval_idempotency_key: str | None = None; approval_hash: str | None = None
     rejection_idempotency_key: str | None = None; rejection_hash: str | None = None
     rejected_at: datetime | None = None; rejection_reason: str | None = None
+    execution_idempotency_key: str | None = None; execution_request_hash: str | None = None
+    execution_result_hash: str | None = None; execution_started_at: datetime | None = None
+    executor_version: str | None = None
 
 
 class LegacyTaskProjection(BaseModel):
@@ -238,6 +248,12 @@ class RejectActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     idempotency_key: str = Field(min_length=1, max_length=128)
     reason: str | None = Field(default=None, max_length=1000)
+
+class ExecuteActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    expected_action_status: str = Field(default="approved", max_length=24)
+    expected_task_version: int | None = Field(default=None, ge=1)
 
 
 def project_legacy_session(session: Mapping[str, Any]) -> LegacySessionProjection:

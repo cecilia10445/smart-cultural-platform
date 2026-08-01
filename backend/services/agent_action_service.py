@@ -10,6 +10,8 @@ from backend.domain.agent_design_domain import (
     DesignTaskRecord, canonical_json_hash,
 )
 from backend.services.agent_design_domain_repository import AgentDesignDomainRepository
+from backend.agents.actions.executor import AgentActionExecutor
+from backend.domain.agent_design_domain import project_legacy_session
 
 
 class AgentActionService:
@@ -117,3 +119,31 @@ class AgentActionService:
         saved, replayed = self.repository.reject_action(user_id, action.session_id, action.task_id, action.id,
             rejection_idempotency_key=idempotency_key, reason=reason)
         return self._safe_action(saved), replayed
+
+    def execute(self, user_id, action_id, *, idempotency_key, expected_action_status, expected_task_version):
+        action, replayed = AgentActionExecutor(self.repository).execute(user_id, action_id, idempotency_key=idempotency_key,
+            expected_action_status=expected_action_status, expected_task_version=expected_task_version)
+        task = self.repository.get_task(action.task_id, user_id, action.session_id)
+        return {"action": self._safe_action(action), "created_artifact_ids": (action.result_json or {}).get("created_artifact_ids", []),
+                "superseded_artifact_ids": (action.result_json or {}).get("superseded_artifact_ids", []), "task": task.model_dump()}, replayed
+
+    @staticmethod
+    def _safe_artifact(item):
+        return {"id": item.id, "task_id": item.task_id, "artifact_type": item.artifact_type, "status": item.status,
+                "version_number": item.version_number, "parent_artifact_id": item.parent_artifact_id, "safe_content": item.content_json,
+                "origin": item.origin, "created_at": item.created_at, "confirmed_at": item.confirmed_at,
+                "superseded_at": item.superseded_at, "generation_log_id": item.generation_log_id}
+
+    def artifacts(self, user_id, session_id, task_id, *, artifact_type=None, status=None, include_legacy=False):
+        native = self.repository.list_artifacts(user_id, session_id, task_id)
+        if artifact_type: native = [item for item in native if item.artifact_type.value == artifact_type]
+        if status: native = [item for item in native if item.status.value == status]
+        result = [self._safe_artifact(item) for item in native]
+        if include_legacy:
+            projection = project_legacy_session(self.repository.get_session(session_id, user_id))
+            for item in projection.artifacts:
+                result.append({"id": item.id, "task_id": item.task_id, "artifact_type": item.artifact_type, "status": item.status,
+                               "version_number": 0, "parent_artifact_id": None, "safe_content": item.content_json,
+                               "origin": item.origin, "created_at": None, "confirmed_at": None, "superseded_at": None,
+                               "generation_log_id": item.generation_log_id, "read_only": True, "materialized": False})
+        return result

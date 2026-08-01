@@ -202,3 +202,57 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
             if cursor.rowcount != 1: raise ActionStateConflict()
             cursor.execute("SELECT * FROM agent_actions WHERE id=%s", (action_id,)); row = self._fetchone(cursor)
         return self._action(row), False
+
+    def execute_approved_action(self, user_id, action_id, *, execution_idempotency_key, expected_task_version, command):
+        """Atomically claim, apply, and complete one non-provider command."""
+        request_hash, now = canonical_json_hash({"expected_task_version": expected_task_version, "command": command}), self._now()
+        with self._transaction() as cursor:
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s FOR UPDATE", (action_id, user_id)); action = self._fetchone(cursor)
+            if action is None: raise ActionNotFound()
+            self._locked_owned_session(cursor, action["session_id"], user_id)
+            task = self._locked_task(cursor, action["task_id"], user_id, action["session_id"])
+            if action.get("status") == ActionStatus.COMPLETED.value:
+                return self._action(action), True
+            if action.get("status") != ActionStatus.APPROVED.value: raise ActionStateConflict()
+            if action.get("execution_idempotency_key"):
+                if action.get("execution_idempotency_key") == execution_idempotency_key and action.get("execution_request_hash") == request_hash:
+                    return self._action(action), True
+                from backend.domain.agent_design_domain import ActionExecutionIdempotencyConflict
+                raise ActionExecutionIdempotencyConflict()
+            if expected_task_version is not None and int(task.get("version") or 0) != expected_task_version: raise DesignTaskVersionConflict()
+            cursor.execute("UPDATE agent_actions SET status='running',execution_idempotency_key=%s,execution_request_hash=%s,execution_started_at=%s,executor_version='f2',updated_at=%s WHERE id=%s AND status='approved'", (execution_idempotency_key,request_hash,now,now,action_id))
+            if cursor.rowcount != 1: raise ActionStateConflict()
+            created, superseded = [], []
+            if command["kind"] == "archive_task":
+                if task.get("status") == DesignTaskStatus.CLOSED.value: raise ActionStateConflict()
+                cursor.execute("UPDATE agent_design_tasks SET status='closed',closed_at=%s,updated_at=%s,version=version+1 WHERE id=%s", (now,now,task["id"]))
+                cursor.execute("UPDATE agent_sessions SET active_task_id=NULL,updated_at=%s WHERE id=%s AND user_id=%s AND active_task_id=%s", (now,action["session_id"],user_id,task["id"]))
+            else:
+                artifact_type = command["artifact_type"]
+                cursor.execute("SELECT * FROM agent_artifacts WHERE user_id=%s AND session_id=%s AND task_id=%s AND artifact_type=%s ORDER BY version_number DESC FOR UPDATE", (user_id,action["session_id"],task["id"],artifact_type)); history=[dict(row) for row in cursor.fetchall() if isinstance(row,dict)]
+                current = next((row for row in history if row.get("status") == ArtifactStatus.CONFIRMED.value), None)
+                parent_id = command.get("parent_artifact_id") or (current or {}).get("id")
+                if command.get("base_artifact_id"):
+                    base = next((row for row in history if row.get("id") == command["base_artifact_id"]), None)
+                    if base is None or base.get("status") != ArtifactStatus.CONFIRMED.value or (command.get("base_content_hash") and base.get("content_hash") != command["base_content_hash"]): raise ArtifactVersionConflict()
+                    parent_id, current = base["id"], base
+                version = (max([int(row.get("version_number") or 0) for row in history], default=0) + 1)
+                if current is not None:
+                    cursor.execute("UPDATE agent_artifacts SET status='superseded',superseded_at=%s WHERE id=%s AND status='confirmed'", (now,current["id"]))
+                    superseded.append(current["id"])
+                artifact_id = str(uuid.uuid4()); content = command["content_json"]
+                cursor.execute("""INSERT INTO agent_artifacts (id,user_id,session_id,task_id,artifact_type,status,version_number,parent_artifact_id,source_runtime_run_id,source_action_id,content_json,content_hash,generation_log_id,origin,created_at,confirmed_at,superseded_at)
+                    VALUES (%s,%s,%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,%s,NULL,'native',%s,%s,NULL)""", (artifact_id,user_id,action["session_id"],task["id"],artifact_type,version,parent_id,action.get("source_runtime_run_id"),action_id,self._json(content),canonical_json_hash(content),now,now))
+                created.append(artifact_id)
+                cursor.execute("UPDATE agent_design_tasks SET updated_at=%s,version=version+1 WHERE id=%s", (now,task["id"]))
+            cursor.execute("SELECT version,status,closed_at,updated_at FROM agent_design_tasks WHERE id=%s", (task["id"],)); final_task=self._fetchone(cursor)
+            result={"created_artifact_ids":created,"superseded_artifact_ids":superseded,"task_version":int(final_task["version"]),"task_status":final_task["status"]}
+            cursor.execute("UPDATE agent_actions SET status='completed',result_json=%s,execution_result_hash=%s,completed_at=%s,updated_at=%s WHERE id=%s AND status='running'", (self._json(result),canonical_json_hash(result),now,now,action_id))
+            if cursor.rowcount != 1: raise ActionStateConflict()
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s", (action_id,)); final_action=self._fetchone(cursor)
+        return self._action(final_action), False
+
+    def mark_action_failed(self, user_id, action_id, code, summary):
+        now = self._now()
+        with self._transaction() as cursor:
+            cursor.execute("UPDATE agent_actions SET status='failed',error_code=%s,error_summary=%s,updated_at=%s WHERE id=%s AND user_id=%s AND status='running'", (code,summary[:1000],now,action_id,user_id))

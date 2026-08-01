@@ -11,13 +11,13 @@ class AgentRuntimeTurnService:
         self.repository, self.design_service = repository, design_service
         self.context_builder = context_builder or (RuntimeContextBuilder(repository) if hasattr(repository, "get_active_summary") else None)
 
-    async def run_turn(self, user_id, session_id, content, client_turn_id):
-        run, replayed = self.repository.create_or_get_run(session_id, user_id, client_turn_id, "design_conversation")
+    async def run_turn(self, user_id, session_id, content, client_turn_id, task_id=None):
+        run, replayed = self.repository.create_or_get_run(session_id, user_id, client_turn_id, "design_conversation", task_id=task_id)
         if replayed:
             return run, True
         context_payload = {}
         if self.context_builder is not None:
-            context_payload = await self.context_builder.build(user_id, session_id, content)
+            context_payload = await self.context_builder.build(user_id, session_id, content, task_id=run.get("task_id"))
         result = await (self.design_service.run_turn(user_id, session_id, content, context_payload)
                         if context_payload else self.design_service.run_turn(user_id, session_id, content))
         result.context_metadata = {**getattr(result, "context_metadata", {}), **{

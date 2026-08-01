@@ -20,7 +20,7 @@ from backend.domain.agent_dialogue import (
 )
 from backend.domain.agent_design_domain import (
     ApproveActionRequest, CreateActionRequest, CreateDesignTaskRequest,
-    RejectActionRequest, SelectDesignTaskRequest,
+    ExecuteActionRequest, RejectActionRequest, SelectDesignTaskRequest,
 )
 from backend.services.agent_action_service import AgentActionService
 from backend.services.agent_design_domain_repository import AgentDesignDomainRepository
@@ -215,7 +215,10 @@ async def assistant_turn(session_id: str, request: Request):
     if service is None:
         return _error(request, "RUNTIME_PROVIDER_UNAVAILABLE", "Assistant runtime is not configured.", 503, unavailable=True)
     try:
-        run, replayed = await service.run_turn(user_id, session_id, payload.content, payload.client_turn_id)
+        if payload.task_id is None:
+            run, replayed = await service.run_turn(user_id, session_id, payload.content, payload.client_turn_id)
+        else:
+            run, replayed = await service.run_turn(user_id, session_id, payload.content, payload.client_turn_id, task_id=payload.task_id)
         display = service.repository.get_safe_run_display(session_id, user_id, run["id"])
         return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": {"run": run, "display": display, "replayed": replayed}}))
     except AgentDialogueError as error:
@@ -349,4 +352,36 @@ async def reject_design_action(action_id: str, request: Request):
     try:
         detail, replayed = get_agent_action_service().reject(user_id, action_id, idempotency_key=payload.idempotency_key, reason=payload.reason)
         return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/actions/{action_id}/execute")
+async def execute_design_action(action_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, ExecuteActionRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        detail, replayed = get_agent_action_service().execute(user_id, action_id, idempotency_key=payload.idempotency_key,
+            expected_action_status=payload.expected_action_status, expected_task_version=payload.expected_task_version)
+        return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/artifacts")
+async def list_design_artifacts(session_id: str, task_id: str, request: Request, artifact_type: str | None = None,
+                                status: str | None = None, include_legacy: bool = False):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try: return _action_success(request, get_agent_action_service().artifacts(user_id, session_id, task_id, artifact_type=artifact_type, status=status, include_legacy=include_legacy))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/artifacts/{artifact_id}")
+async def get_design_artifact(session_id: str, task_id: str, artifact_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        item = get_agent_action_service().repository.get_artifact(artifact_id, user_id, session_id, task_id)
+        return _action_success(request, get_agent_action_service()._safe_artifact(item))
     except AgentDialogueError as error: return _handle_domain_error(request, error)

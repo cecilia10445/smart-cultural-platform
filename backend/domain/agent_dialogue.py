@@ -84,6 +84,11 @@ class AgentSessionVersionConflict(AgentDialogueError):
     status_code = 409
     message = "Agent session was changed by another request."
 
+class RuntimeTurnIdempotencyConflict(AgentDialogueError):
+    code = "RUNTIME_TURN_IDEMPOTENCY_CONFLICT"
+    status_code = 409
+    message = "Client turn id was reused for another design task."
+
 
 class AgentInvalidTransition(AgentDialogueError):
     code = "INVALID_SESSION_TRANSITION"
@@ -183,6 +188,7 @@ class AssistantTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=4000)
     client_turn_id: str = Field(min_length=1, max_length=128)
+    task_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class AgentDecisionRequest(BaseModel):
