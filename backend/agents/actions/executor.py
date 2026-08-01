@@ -49,7 +49,7 @@ class AgentActionExecutor:
         if expected_action_status != "approved":
             from backend.domain.agent_design_domain import ActionStateConflict
             raise ActionStateConflict()
-        if action.status.value == "completed":
+        if action.status.value == "completed" and action.action_type not in IMAGE_ACTIONS:
             return action, True
         if action.action_type in IMAGE_ACTIONS:
             if self.image_port is None: raise ActionExecutorNotAvailable()

@@ -259,17 +259,21 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
 
     def claim_image_action(self, user_id, action_id, *, idempotency_key, expected_task_version):
         now = self._now()
+        request_hash=canonical_json_hash({"expected_task_version":expected_task_version,"action_id":action_id})
         with self._transaction() as cursor:
             cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s FOR UPDATE", (action_id,user_id)); action=self._fetchone(cursor)
             if action is None: raise ActionNotFound()
             task=self._locked_task(cursor,action["task_id"],user_id,action["session_id"])
-            if action.get("status") == ActionStatus.COMPLETED.value: return self._action(action), True
+            if action.get("status") == ActionStatus.COMPLETED.value:
+                if action.get("execution_idempotency_key") == idempotency_key and action.get("execution_request_hash") != request_hash:
+                    from backend.domain.agent_design_domain import ActionExecutionIdempotencyConflict
+                    raise ActionExecutionIdempotencyConflict()
+                return self._action(action), True
             if action.get("status") == ActionStatus.RUNNING.value:
                 from backend.domain.agent_design_domain import ActionStateConflict
                 raise ActionStateConflict("ACTION_EXECUTION_RECOVERY_REQUIRED")
             if action.get("status") != ActionStatus.APPROVED.value: raise ActionStateConflict()
             if expected_task_version is not None and int(task.get("version") or 0) != expected_task_version: raise DesignTaskVersionConflict()
-            request_hash=canonical_json_hash({"expected_task_version":expected_task_version,"action_id":action_id})
             cursor.execute("UPDATE agent_actions SET status='running',execution_idempotency_key=%s,execution_request_hash=%s,execution_started_at=%s,executor_version='f3',external_outcome_status='claimed',updated_at=%s WHERE id=%s AND status='approved'", (idempotency_key,request_hash,now,now,action_id))
             cursor.execute("SELECT * FROM agent_actions WHERE id=%s",(action_id,)); action=self._fetchone(cursor)
         return self._action(action), False
