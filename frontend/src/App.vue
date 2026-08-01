@@ -5,38 +5,39 @@
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span>智能文创平台</span>
       </a>
+      <nav class="workspace-header__nav" aria-label="主导航">
+        <button type="button" :class="{ active: activeTab === 'generate' && generationMode === 'agent' }" @click="setGenerationMode('agent')">协作式设计</button>
+        <button type="button" :class="{ active: activeTab === 'generate' && generationMode === 'fast' }" @click="setGenerationMode('fast')">快速生成</button>
+        <button type="button" :class="{ active: activeTab === 'history' }" @click="switchTab('history')">记录</button>
+        <button type="button" :class="{ active: activeTab === 'recommendations' }" @click="switchTab('recommendations')">灵感</button>
+        <button type="button" :class="{ active: activeTab === 'profile' }" @click="switchTab('profile')">账户</button>
+      </nav>
       <div class="account-summary">
         <span class="account-name">{{ userInfo?.name || userInfo?.username || '已登录用户' }}</span>
         <button type="button" class="text-button" @click="logout">退出登录</button>
       </div>
     </header>
 
-    <div class="workspace-layout">
-      <nav class="workspace-nav" aria-label="用户工作台导航">
+    <div :class="['workspace-layout', { 'workspace-layout--agent': activeTab === 'generate' && generationMode === 'agent' }]">
+      <nav v-if="activeTab !== 'generate' || generationMode !== 'agent'" class="workspace-nav" aria-label="用户工作台导航">
         <button type="button" :class="{ active: activeTab === 'generate' }" :aria-current="activeTab === 'generate' ? 'page' : undefined" @click="switchTab('generate')"><span>01</span>创作</button>
         <button type="button" :class="{ active: activeTab === 'history' }" :aria-current="activeTab === 'history' ? 'page' : undefined" @click="switchTab('history')"><span>02</span>记录</button>
         <button type="button" :class="{ active: activeTab === 'recommendations' }" :aria-current="activeTab === 'recommendations' ? 'page' : undefined" @click="switchTab('recommendations')"><span>03</span>灵感</button>
         <button type="button" :class="{ active: activeTab === 'profile' }" :aria-current="activeTab === 'profile' ? 'page' : undefined" @click="switchTab('profile')"><span>04</span>账户</button>
       </nav>
 
-      <section class="workspace-content">
+      <section :class="['workspace-content', { 'workspace-content--agent': activeTab === 'generate' && generationMode === 'agent' }]">
         <section v-if="activeTab === 'generate'" aria-labelledby="generate-title">
+          <AgentDesignPanel v-if="generationMode === 'agent'" ref="agentPanel" :key="agentPanelKey" @return-to-history="switchTab('history')" />
+
+          <template v-else>
           <div class="section-heading">
             <p class="section-index">创作</p>
             <h1 id="generate-title">把文化意象说清楚</h1>
             <p>写下主题和用途，再选择画面方向，让创作从一个清晰的想法开始。</p>
           </div>
 
-          <div class="creation-mode-area">
-            <div class="creation-mode-switch" role="group" aria-label="创作模式">
-              <button type="button" :class="{ active: generationMode === 'fast' }" @click="generationMode = 'fast'">快速生成</button>
-              <button type="button" :class="{ active: generationMode === 'agent' }" @click="openNewAgentDesign">协作式设计</button>
-            </div>
-          </div>
-
-          <AgentDesignPanel v-if="generationMode === 'agent'" ref="agentPanel" :key="agentPanelKey" @return-to-history="switchTab('history')" />
-
-          <form v-if="generationMode === 'fast'" class="creation-form" @submit.prevent="generateContent" novalidate>
+          <form class="creation-form" @submit.prevent="generateContent" novalidate>
             <div class="brief-grid">
               <label class="field-block" data-field-key="product_type" :class="{ 'field-invalid': fieldErrors.product_type }"><span>产品类型</span><input v-model="brief.product_type" :aria-invalid="Boolean(fieldErrors.product_type)" :disabled="loading" placeholder="例如：书签" required><small v-if="fieldErrors.product_type" class="field-error">{{ fieldErrors.product_type }}</small></label>
               <label class="field-block" data-field-key="presentation_mode" :class="{ 'field-invalid': fieldErrors.presentation_mode }"><span>产品展示方式</span><select id="presentation-mode" v-model="brief.presentation_mode" :disabled="loading" @change="handlePresentationModeChange"><option value="flat_front_back">正反面</option><option value="three_view">三视图</option><option value="single_hero">单品主视图</option></select><small v-if="fieldErrors.presentation_mode" class="field-error">{{ fieldErrors.presentation_mode }}</small></label>
@@ -109,7 +110,7 @@
             </div>
           </form>
 
-          <section v-if="generationMode === 'fast' && loading" class="generation-state" aria-live="polite">
+          <section v-if="loading" class="generation-state" aria-live="polite">
             <span class="large-spinner" aria-hidden="true"></span>
             <div>
               <h2>正在处理你的创作请求</h2>
@@ -117,7 +118,7 @@
             </div>
           </section>
 
-          <section v-if="generationMode === 'fast' && result && !loading" class="result-section" aria-labelledby="result-title">
+          <section v-if="result && !loading" class="result-section" aria-labelledby="result-title">
             <div class="result-header">
               <p class="section-index">本次创作</p>
               <h2 id="result-title">生成结果</h2>
@@ -197,6 +198,7 @@
             </div>
             <button type="button" class="secondary-button" @click="openDetail(result)">查看完整详情</button>
           </section>
+          </template>
         </section>
 
         <section v-else-if="activeTab === 'history'" aria-labelledby="history-title">
@@ -321,7 +323,7 @@ export default {
   data() {
     return {
       activeTab: 'generate',
-      generationMode: new URLSearchParams(window.location.search).get('agent_session_id') ? 'agent' : 'fast',
+      generationMode: new URLSearchParams(window.location.search).get('creation_mode') === 'fast' ? 'fast' : 'agent',
       prompt: '',
       confirmedFactsText: '',
       brief: {
@@ -412,6 +414,14 @@ export default {
       if (tab === 'history') this.loadHistory()
       if (tab === 'recommendations') this.loadRecommendations()
     },
+    setGenerationMode(mode) {
+      const url = new URL(window.location.href)
+      url.searchParams.set('creation_mode', mode)
+      if (mode === 'fast') url.searchParams.delete('agent_session_id')
+      window.history.pushState({}, '', url)
+      this.activeTab = 'generate'
+      this.generationMode = mode
+    },
     openNewAgentDesign() {
       if (this.generationMode === 'agent' && this.activeTab === 'generate' && this.$refs.agentPanel) {
         this.$refs.agentPanel.startNew()
@@ -420,6 +430,7 @@ export default {
       const url = new URL(window.location.href)
       url.searchParams.delete('agent_session_id')
       url.searchParams.delete('view')
+      url.searchParams.set('creation_mode', 'agent')
       window.history.replaceState({}, '', url)
       this.generationMode = 'agent'
       this.activeTab = 'generate'
@@ -697,6 +708,7 @@ export default {
       const url = new URL(window.location.href)
       url.searchParams.set('agent_session_id', record.agent_session_id)
       url.searchParams.set('view', 'history')
+      url.searchParams.set('creation_mode', 'agent')
       url.searchParams.delete('tab')
       window.history.pushState({}, '', url)
       this.generationMode = 'agent'
@@ -1688,5 +1700,24 @@ textarea:focus, input:focus, select:focus {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* Collaborative design is a primary workspace, not a form subsection. */
+.workspace-header { position: sticky; top: 0; z-index: 30; }
+.workspace-header__nav { display: flex; align-items: stretch; gap: .15rem; margin-left: auto; }
+.workspace-header__nav button { border: 0; border-bottom: 2px solid transparent; padding: 1.2rem .65rem 1.05rem; color: #516056; background: transparent; font: 700 .86rem "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; cursor: pointer; }
+.workspace-header__nav button:hover, .workspace-header__nav button.active { color: #173f34; border-bottom-color: #a44536; }
+.workspace-layout--agent { width: 100%; max-width: none; min-height: calc(100dvh - 76px); display: block; }
+.workspace-content--agent { height: calc(100dvh - 76px); min-height: 560px; padding: 0; }
+.workspace-content--agent > section { height: 100%; }
+@media (max-width: 900px) {
+  .workspace-header__nav { order: 3; width: 100%; overflow-x: auto; margin: 0; }
+  .workspace-header { flex-wrap: wrap; }
+  .workspace-header__nav button { flex: 0 0 auto; padding: .75rem .55rem; }
+  .workspace-content--agent { height: calc(100dvh - 122px); }
+}
+@media (max-width: 680px) {
+  .workspace-header__nav button { font-size: .78rem; }
+  .workspace-content--agent { height: calc(100dvh - 118px); }
 }
 </style>
