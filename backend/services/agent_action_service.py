@@ -52,9 +52,12 @@ class AgentActionService:
         if reply.business_action is not None:
             if not isinstance(reply.business_action.action, ActionType) or reply.business_action.action != action_type:
                 raise ActionReferenceConflict("Requested action does not match the runtime proposal.")
-            return {"source_type": "runtime_proposal", "summary": reply.business_action.reason_summary,
-                    "proposal_kind": action_type.value, "output_origin": reply.output_origin,
-                    "tentative_assumptions": []}
+            snapshot = dict(reply.business_action.snapshot or {})
+            snapshot.update({"summary": reply.business_action.reason_summary,
+                             "proposal_kind": action_type.value, "output_origin": reply.output_origin})
+            snapshot.setdefault("source_type", "runtime_proposal")
+            snapshot.setdefault("tentative_assumptions", [])
+            return snapshot
         # A typed, unsaved artifact can only back its corresponding save command.
         proposal = reply.artifact_proposal
         expected = {ActionType.SAVE_BRIEF: "brief", ActionType.SAVE_DESIGN_TEXT: "product_design_text"}
@@ -64,6 +67,25 @@ class AgentActionService:
         return {"source_type": "runtime_proposal", "summary": proposal.summary, "proposal_kind": kind,
                 "content": proposal.content, "tentative_assumptions": proposal.assumptions,
                 "output_origin": reply.output_origin}
+
+    def runtime_action_proposal(self, user_id: str, session_id: str, run_id: str, action_type: ActionType) -> dict[str, Any]:
+        """Return a display-safe, server-derived reference for a requested command.
+
+        The digest is calculated from the complete frozen proposal; prompt text
+        and provider options deliberately never cross this HTTP boundary.
+        """
+        run = self.repository.get_runtime_run_for_action(user_id, session_id, run_id)
+        snapshot = self._runtime_proposal(run, action_type)
+        display = {
+            "source_type": snapshot.get("source_type"),
+            "safe_summary": snapshot.get("summary"),
+            "confirmed_constraints": snapshot.get("confirmed_constraints") or [],
+            "tentative_assumptions": snapshot.get("tentative_assumptions") or [],
+            "presentation_mode": snapshot.get("presentation_mode"),
+        }
+        return {"source_runtime_run_id": run_id, "action_type": action_type.value,
+                "source_proposal_digest": canonical_json_hash({"action_type": action_type.value, "proposal": snapshot}),
+                "display": display}
 
     def request_action(self, user_id: str, session_id: str, task_id: str, *, action_type: ActionType, idempotency_key: str,
                        source_runtime_run_id: str, source_proposal_digest: str, expected_task_version: int | None):

@@ -124,6 +124,9 @@ class BusinessActionRequest(BaseModel):
     # domain ActionType rather than inventing a second action vocabulary.
     action: ActionType | Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
     reason_summary: str = Field(min_length=1, max_length=1000)
+    # A provider may supply a frozen, reviewable command package.  It is never
+    # rendered verbatim and the Action service owns validation and freezing.
+    snapshot: dict[str, Any] | None = None
 
 
 class ConversationReply(BaseModel):
@@ -210,6 +213,7 @@ class ProviderBusinessActionV2(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: ActionType | Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
     reason_summary: str = Field(min_length=1, max_length=1000)
+    snapshot: dict[str, Any] | None = None
 
 
 class ProviderConversationReplyV2(BaseModel):

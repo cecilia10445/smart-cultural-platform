@@ -177,6 +177,7 @@ async function openWorkspace(page, context, options = {}) {
   })
 
   await page.goto('/index.html', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: '快速生成' }).click()
   await expect(page.getByRole('heading', { name: '把文化意象说清楚' })).toBeVisible()
 
   return {

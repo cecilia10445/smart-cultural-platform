@@ -19,7 +19,7 @@ from backend.domain.agent_dialogue import (
     CreateAgentSessionRequest,
 )
 from backend.domain.agent_design_domain import (
-    ApproveActionRequest, CreateActionRequest, CreateDesignTaskRequest,
+    ActionType, ApproveActionRequest, CreateActionRequest, CreateDesignTaskRequest,
     ExecuteActionRequest, RejectActionRequest, SelectDesignTaskRequest,
 )
 from backend.services.agent_action_service import AgentActionService
@@ -239,6 +239,17 @@ async def get_assistant_turn(session_id: str, run_id: str, request: Request):
         return _handle_domain_error(request, error)
 
 
+@router.get("/api/v2/agent-design/sessions/{session_id}/assistant-turns/{run_id}/action-proposal")
+async def get_runtime_action_proposal(session_id: str, run_id: str, action_type: ActionType, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        return _action_success(request, get_agent_action_service().runtime_action_proposal(user_id, session_id, run_id, action_type))
+    except AgentDialogueError as error:
+        return _handle_domain_error(request, error)
+
+
 def _action_success(request: Request, detail, *, replayed: bool = False):
     return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": detail, "replayed": replayed}))
 
@@ -248,8 +259,10 @@ async def list_design_tasks(session_id: str, request: Request):
     user_id = _authenticated_user_id(request)
     if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
     try:
-        tasks = get_agent_action_service().repository.list_tasks(user_id, session_id)
-        return _action_success(request, [item.model_dump() for item in tasks])
+        service = get_agent_action_service()
+        active = service.repository.get_active_task(user_id, session_id)
+        tasks = service.repository.list_tasks(user_id, session_id)
+        return _action_success(request, [{**item.model_dump(), "is_active": active is not None and item.id == active.id} for item in tasks])
     except AgentDialogueError as error: return _handle_domain_error(request, error)
 
 
