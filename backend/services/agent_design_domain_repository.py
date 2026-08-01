@@ -6,10 +6,10 @@ import uuid
 from typing import Any
 
 from backend.domain.agent_design_domain import (
-    ActionIdempotencyConflict, ActionNotFound, ActionRecord, ActionReferenceConflict, ActionStatus, ActionType,
+    ActionApprovalIdempotencyConflict, ActionIdempotencyConflict, ActionNotFound, ActionRecord, ActionReferenceConflict, ActionStateConflict, ActionStatus, ActionType,
     ArtifactNotFound, ArtifactOrigin, ArtifactParentConflict, ArtifactRecord, ArtifactStatus, ArtifactType, ArtifactVersionConflict,
     DesignTaskNotFound, DesignTaskOrigin, DesignTaskRecord, DesignTaskScopeConflict, DesignTaskStatus, DesignTaskVersionConflict,
-    canonical_json_hash,
+    ConversationProjection, ConversationStatus, canonical_json_hash,
 )
 from backend.services.agent_dialogue_repository import AgentDialogueRepository
 
@@ -37,18 +37,32 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
         for key in ("proposal_snapshot_json", "approval_snapshot_json", "result_json"): value[key] = self._json_value(value.get(key), None)
         return ActionRecord.model_validate(value)
 
+    def get_conversation(self, user_id, session_id):
+        with self._transaction() as cursor:
+            cursor.execute("SELECT * FROM agent_sessions WHERE id=%s AND user_id=%s", (session_id, user_id)); row = self._fetchone(cursor)
+        if row is None:
+            from backend.domain.agent_dialogue import AgentSessionNotFound
+            raise AgentSessionNotFound()
+        value = dict(row)
+        value["conversation_status"] = value.get("conversation_status") or ConversationStatus.ACTIVE.value
+        value["legacy_session_status"] = value.get("status")
+        return ConversationProjection.model_validate(value)
+
     def _locked_task(self, cursor, task_id, user_id, session_id):
         cursor.execute("SELECT * FROM agent_design_tasks WHERE id=%s AND user_id=%s AND session_id=%s FOR UPDATE", (task_id, user_id, session_id))
         row = self._fetchone(cursor)
         if row is None: raise DesignTaskNotFound()
         return row
 
-    def create_task(self, user_id, session_id, *, title, status=DesignTaskStatus.EXPLORING, origin=DesignTaskOrigin.NATIVE):
+    def create_task(self, user_id, session_id, *, title, client_task_id=None, status=DesignTaskStatus.EXPLORING, origin=DesignTaskOrigin.NATIVE):
         task_id, now = str(uuid.uuid4()), self._now()
         with self._transaction() as cursor:
             self._locked_owned_session(cursor, session_id, user_id)
-            cursor.execute("""INSERT INTO agent_design_tasks (id,user_id,session_id,title,status,origin,version,created_at,updated_at,paused_at,closed_at)
-                VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,NULL,NULL)""", (task_id, user_id, session_id, title.strip(), status.value, origin.value, now, now))
+            if client_task_id:
+                cursor.execute("SELECT * FROM agent_design_tasks WHERE user_id=%s AND session_id=%s AND client_task_id=%s FOR UPDATE", (user_id, session_id, client_task_id)); existing = self._fetchone(cursor)
+                if existing is not None: return self._task(existing)
+            cursor.execute("""INSERT INTO agent_design_tasks (id,user_id,session_id,title,status,origin,version,client_task_id,created_at,updated_at,paused_at,closed_at)
+                VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s,NULL,NULL)""", (task_id, user_id, session_id, title.strip(), status.value, origin.value, client_task_id, now, now))
             cursor.execute("SELECT * FROM agent_design_tasks WHERE id=%s AND user_id=%s", (task_id, user_id)); row = self._fetchone(cursor)
         return self._task(row)
 
@@ -69,6 +83,7 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
             session = self._locked_owned_session(cursor, session_id, user_id)
             if expected_session_version is not None and int(session.get("version") or 0) != expected_session_version: raise DesignTaskVersionConflict()
             task = self._locked_task(cursor, task_id, user_id, session_id)
+            if task.get("status") == DesignTaskStatus.CLOSED.value: raise DesignTaskScopeConflict("Closed design tasks cannot be selected.")
             cursor.execute("UPDATE agent_sessions SET active_task_id=%s,version=version+1,updated_at=%s WHERE id=%s AND user_id=%s AND version=%s", (task_id, now, session_id, user_id, session["version"]))
             if cursor.rowcount != 1: raise DesignTaskVersionConflict()
         return self._task(task)
@@ -137,7 +152,53 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
             cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s AND session_id=%s AND task_id=%s",(action_id,user_id,session_id,task_id)); row=self._fetchone(cursor)
         return self._action(row)
 
+    def get_action_any_owner(self, action_id, user_id):
+        with self._transaction() as cursor:
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s", (action_id, user_id)); row = self._fetchone(cursor)
+        return self._action(row)
+
     def list_actions(self,user_id,session_id,task_id):
         with self._transaction() as cursor:
             self._locked_task(cursor,task_id,user_id,session_id); cursor.execute("SELECT * FROM agent_actions WHERE user_id=%s AND session_id=%s AND task_id=%s ORDER BY created_at,id",(user_id,session_id,task_id)); rows=[dict(r) for r in cursor.fetchall() if isinstance(r,dict)]
         return [self._action(row) for row in rows]
+
+    def get_runtime_run_for_action(self, user_id, session_id, run_id):
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT * FROM agent_runtime_runs WHERE id=%s AND user_id=%s AND session_id=%s", (run_id, user_id, session_id)); row = self._fetchone(cursor)
+        if row is None: raise ActionReferenceConflict("Runtime proposal does not belong to this conversation.")
+        value = dict(row); value["final_output_json"] = self._json_value(value.get("final_output_json"), None)
+        return value
+
+    def approve_action(self, user_id, session_id, task_id, action_id, *, expected_task_version, approval_idempotency_key, approval_snapshot_json):
+        approval_hash, now = canonical_json_hash(approval_snapshot_json), self._now()
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id); task = self._locked_task(cursor, task_id, user_id, session_id)
+            if expected_task_version is not None and int(task.get("version") or 0) != expected_task_version: raise DesignTaskVersionConflict()
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s AND session_id=%s AND task_id=%s FOR UPDATE", (action_id,user_id,session_id,task_id)); row = self._fetchone(cursor)
+            if row is None: raise ActionNotFound()
+            if row.get("status") == ActionStatus.APPROVED.value:
+                if row.get("approval_idempotency_key") == approval_idempotency_key and row.get("approval_hash") == approval_hash: return self._action(row), True
+                raise ActionApprovalIdempotencyConflict()
+            if row.get("status") != ActionStatus.REQUESTED.value: raise ActionStateConflict()
+            cursor.execute("""UPDATE agent_actions SET status='approved',approval_snapshot_json=%s,approval_idempotency_key=%s,approval_hash=%s,
+                approved_at=%s,updated_at=%s WHERE id=%s AND status='requested'""", (self._json(approval_snapshot_json),approval_idempotency_key,approval_hash,now,now,action_id))
+            if cursor.rowcount != 1: raise ActionStateConflict()
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s", (action_id,)); row = self._fetchone(cursor)
+        return self._action(row), False
+
+    def reject_action(self, user_id, session_id, task_id, action_id, *, rejection_idempotency_key, reason):
+        snapshot, now = {"reason": reason} if reason else {}, self._now(); rejection_hash = canonical_json_hash(snapshot)
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id); self._locked_task(cursor, task_id, user_id, session_id)
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s AND session_id=%s AND task_id=%s FOR UPDATE", (action_id,user_id,session_id,task_id)); row = self._fetchone(cursor)
+            if row is None: raise ActionNotFound()
+            if row.get("status") == ActionStatus.REJECTED.value:
+                if row.get("rejection_idempotency_key") == rejection_idempotency_key and row.get("rejection_hash") == rejection_hash: return self._action(row), True
+                raise ActionApprovalIdempotencyConflict()
+            if row.get("status") != ActionStatus.REQUESTED.value: raise ActionStateConflict()
+            cursor.execute("""UPDATE agent_actions SET status='rejected',rejection_idempotency_key=%s,rejection_hash=%s,rejection_reason=%s,
+                rejected_at=%s,updated_at=%s WHERE id=%s AND status='requested'""", (rejection_idempotency_key,rejection_hash,reason,now,now,action_id))
+            if cursor.rowcount != 1: raise ActionStateConflict()
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s", (action_id,)); row = self._fetchone(cursor)
+        return self._action(row), False

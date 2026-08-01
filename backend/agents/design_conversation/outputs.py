@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from backend.domain.agent_design_domain import ActionType
 
 
 class DirectAnswer(BaseModel):
@@ -119,7 +120,9 @@ class BusinessActionRequest(BaseModel):
     """A request for explicit human confirmation; it does not execute itself."""
 
     model_config = ConfigDict(extra="forbid")
-    action: Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
+    # Legacy Runtime values remain readable.  New explicit commands reuse the
+    # domain ActionType rather than inventing a second action vocabulary.
+    action: ActionType | Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
     reason_summary: str = Field(min_length=1, max_length=1000)
 
 
@@ -205,7 +208,7 @@ ProviderArtifactV2 = Annotated[
 
 class ProviderBusinessActionV2(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
+    action: ActionType | Literal["confirm_brief", "regenerate_product_text", "confirm_product_text", "confirm_image_generation"]
     reason_summary: str = Field(min_length=1, max_length=1000)
 
 

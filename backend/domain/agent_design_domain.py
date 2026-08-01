@@ -122,6 +122,18 @@ class ActionReferenceConflict(AgentDesignDomainError):
     code = "ACTION_REFERENCE_CONFLICT"; status_code = 409; message = "Action references do not belong to this design task."
 
 
+class ActionPolicyDenied(AgentDesignDomainError):
+    code = "ACTION_POLICY_DENIED"; status_code = 409; message = "This design action is not currently available."
+
+
+class ActionStateConflict(AgentDesignDomainError):
+    code = "ACTION_STATE_CONFLICT"; status_code = 409; message = "Design action is no longer in the expected state."
+
+
+class ActionApprovalIdempotencyConflict(AgentDesignDomainError):
+    code = "ACTION_APPROVAL_IDEMPOTENCY_CONFLICT"; status_code = 409; message = "Approval idempotency key was reused with different confirmation details."
+
+
 def assert_task_transition(source: DesignTaskStatus, target: DesignTaskStatus) -> None:
     if target not in TASK_TRANSITIONS[source]:
         raise DesignTaskTransitionConflict()
@@ -146,6 +158,7 @@ class DesignTaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str; user_id: str; session_id: str; title: str = Field(min_length=1, max_length=255)
     status: DesignTaskStatus; origin: DesignTaskOrigin; version: int = Field(ge=1)
+    client_task_id: str | None = None
     created_at: datetime; updated_at: datetime; paused_at: datetime | None = None; closed_at: datetime | None = None
 
 
@@ -167,6 +180,9 @@ class ActionRecord(BaseModel):
     approval_snapshot_json: dict[str, Any] | None = None; result_json: dict[str, Any] | None = None
     error_code: str | None = None; error_summary: str | None = None; generation_log_id: int | None = Field(default=None, ge=1)
     retry_of_action_id: str | None = None; created_at: datetime; updated_at: datetime; approved_at: datetime | None = None; completed_at: datetime | None = None
+    approval_idempotency_key: str | None = None; approval_hash: str | None = None
+    rejection_idempotency_key: str | None = None; rejection_hash: str | None = None
+    rejected_at: datetime | None = None; rejection_reason: str | None = None
 
 
 class LegacyTaskProjection(BaseModel):
@@ -185,6 +201,43 @@ class LegacyArtifactProjection(BaseModel):
 class LegacySessionProjection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task: LegacyTaskProjection; artifacts: list[LegacyArtifactProjection] = Field(default_factory=list)
+
+
+class CreateDesignTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=255)
+    initial_goal: str | None = Field(default=None, max_length=2000)
+    client_task_id: str | None = Field(default=None, min_length=1, max_length=128)
+    select: bool = False
+    expected_session_version: int | None = Field(default=None, ge=1)
+
+
+class SelectDesignTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_session_version: int | None = Field(default=None, ge=1)
+
+
+class CreateActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_type: ActionType
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    source_runtime_run_id: str = Field(min_length=1, max_length=36)
+    source_proposal_digest: str = Field(min_length=64, max_length=64)
+    expected_task_version: int | None = Field(default=None, ge=1)
+
+
+class ApproveActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    expected_action_status: str = Field(default="requested", max_length=24)
+    expected_task_version: int | None = Field(default=None, ge=1)
+    approval_snapshot: dict[str, Any] | None = None
+
+
+class RejectActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 def project_legacy_session(session: Mapping[str, Any]) -> LegacySessionProjection:

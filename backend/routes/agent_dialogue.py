@@ -18,6 +18,12 @@ from backend.domain.agent_dialogue import (
     AssistantTurnRequest,
     CreateAgentSessionRequest,
 )
+from backend.domain.agent_design_domain import (
+    ApproveActionRequest, CreateActionRequest, CreateDesignTaskRequest,
+    RejectActionRequest, SelectDesignTaskRequest,
+)
+from backend.services.agent_action_service import AgentActionService
+from backend.services.agent_design_domain_repository import AgentDesignDomainRepository
 from backend.services.agent_dialogue_repository import AgentDialogueRepository
 from backend.services.agent_dialogue_service import AgentDialogueService
 
@@ -73,6 +79,11 @@ def get_agent_dialogue_service() -> AgentDialogueService:
     from backend.routes import api
 
     return AgentDialogueService(AgentDialogueRepository(api.mysql_service))
+
+
+def get_agent_action_service() -> AgentActionService:
+    from backend.routes import api
+    return AgentActionService(AgentDesignDomainRepository(api.mysql_service))
 
 
 def get_agent_runtime_turn_service():
@@ -223,3 +234,119 @@ async def get_assistant_turn(session_id: str, run_id: str, request: Request):
         return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": service.repository.get_safe_run_display(session_id, user_id, run_id)}))
     except AgentDialogueError as error:
         return _handle_domain_error(request, error)
+
+
+def _action_success(request: Request, detail, *, replayed: bool = False):
+    return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": detail, "replayed": replayed}))
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks")
+async def list_design_tasks(session_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        tasks = get_agent_action_service().repository.list_tasks(user_id, session_id)
+        return _action_success(request, [item.model_dump() for item in tasks])
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/sessions/{session_id}/tasks")
+async def create_design_task(session_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, CreateDesignTaskRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        repository = get_agent_action_service().repository
+        task = repository.create_task(user_id, session_id, title=payload.title, client_task_id=payload.client_task_id)
+        if payload.select:
+            repository.select_active_task(user_id, session_id, task.id, expected_session_version=payload.expected_session_version)
+        return _action_success(request, task.model_dump())
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}")
+async def get_design_task(session_id: str, task_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try: return _action_success(request, get_agent_action_service().task_view(user_id, session_id, task_id).model_dump())
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/select")
+async def select_design_task(session_id: str, task_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, SelectDesignTaskRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        task = get_agent_action_service().repository.select_active_task(user_id, session_id, task_id, expected_session_version=payload.expected_session_version)
+        return _action_success(request, task.model_dump())
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/available-actions")
+async def get_available_design_actions(session_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try: return _action_success(request, get_agent_action_service().available(user_id, session_id))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/actions")
+async def request_design_action(session_id: str, task_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, CreateActionRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        detail, replayed = get_agent_action_service().request_action(user_id, session_id, task_id, action_type=payload.action_type,
+            idempotency_key=payload.idempotency_key, source_runtime_run_id=payload.source_runtime_run_id,
+            source_proposal_digest=payload.source_proposal_digest, expected_task_version=payload.expected_task_version)
+        return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/actions")
+async def list_design_actions(session_id: str, task_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        service = get_agent_action_service()
+        return _action_success(request, [service._safe_action(item) for item in service.repository.list_actions(user_id, session_id, task_id)])
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/actions/{action_id}")
+async def get_design_action(session_id: str, task_id: str, action_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        service = get_agent_action_service()
+        return _action_success(request, service._safe_action(service.repository.get_action(action_id, user_id, session_id, task_id)))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/actions/{action_id}/approve")
+async def approve_design_action(action_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, ApproveActionRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        detail, replayed = get_agent_action_service().approve(user_id, action_id, expected_action_status=payload.expected_action_status,
+            expected_task_version=payload.expected_task_version, idempotency_key=payload.idempotency_key, approval_snapshot=payload.approval_snapshot)
+        return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.post("/api/v2/agent-design/actions/{action_id}/reject")
+async def reject_design_action(action_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, RejectActionRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        detail, replayed = get_agent_action_service().reject(user_id, action_id, idempotency_key=payload.idempotency_key, reason=payload.reason)
+        return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
