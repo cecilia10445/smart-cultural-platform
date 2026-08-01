@@ -473,7 +473,7 @@ def _brief_projection(value: Any) -> BriefSummaryResponse | None:
 def project_agent_session_list_item(session_row: Mapping[str, Any]) -> AgentSessionListItemResponse:
     brief = _brief_projection(session_row.get("brief_json"))
     status = _status(session_row.get("status"))
-    title = (brief.product_type if brief and brief.product_type else None) or "新建文创对话"
+    title = _session_title(_text(session_row.get("first_user_text"))) or (brief.product_type if brief and brief.product_type else None) or "文创设计对话"
     return AgentSessionListItemResponse(
         session_id=str(session_row.get("id", "")), title=title[:80], status=status,
         updated_at=_iso(session_row.get("updated_at")),
@@ -483,6 +483,21 @@ def project_agent_session_list_item(session_row: Mapping[str, Any]) -> AgentSess
             AgentSessionStatus.WAITING_IMAGE_CONFIRMATION,
         },
     )
+
+
+def _session_title(value: str | None) -> str | None:
+    if not value:
+        return None
+    import re
+    text = re.sub(r"\s+", " ", value).strip(" ，。；、：:！!？?\n\t")
+    if not text:
+        return None
+    sentence = re.split(r"[。！？!?\n]", text, maxsplit=1)[0].strip()
+    # Remove common polite lead-ins so the visible title starts with the idea.
+    sentence = re.sub(r"^(我想|请|帮我|想要|设计一款|做一款|帮忙做一款)", "", sentence).strip()
+    if len(sentence) > 22:
+        sentence = sentence[:21].rstrip(" ，。；、：:") + "…"
+    return sentence or "文创设计对话"
 
 
 def _design_projection(value: Any) -> ProductDesignResponse | None:

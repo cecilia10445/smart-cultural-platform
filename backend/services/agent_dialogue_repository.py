@@ -115,10 +115,25 @@ class AgentDialogueRepository:
         return row
 
     def list_sessions(self, user_id: str) -> list[dict[str, Any]]:
-        """Return only this owner's session rows, newest activity first."""
+        """Return this owner's meaningful sessions, newest activity first.
+
+        Empty rows created by older clients remain recoverable by ID but are not
+        presented as conversations in the normal workspace list.
+        """
         with self._transaction() as cursor:
             cursor.execute(
-                "SELECT * FROM agent_sessions WHERE user_id=%s ORDER BY updated_at DESC, created_at DESC",
+                """SELECT s.*, (
+                    SELECT m.content_text FROM agent_messages m
+                    WHERE m.session_id=s.id AND m.role='user' AND TRIM(COALESCE(m.content_text,''))<>''
+                    ORDER BY m.sequence_no ASC LIMIT 1
+                ) AS first_user_text
+                FROM agent_sessions s
+                WHERE s.user_id=%s AND (
+                    EXISTS(SELECT 1 FROM agent_messages m WHERE m.session_id=s.id AND m.role='user' AND TRIM(COALESCE(m.content_text,''))<>'')
+                    OR s.brief_json IS NOT NULL OR s.confirmed_text_json IS NOT NULL OR s.image_prompt_json IS NOT NULL
+                    OR s.generation_log_id IS NOT NULL OR EXISTS(SELECT 1 FROM agent_runtime_runs r WHERE r.session_id=s.id AND r.status='completed')
+                )
+                ORDER BY s.updated_at DESC, s.created_at DESC""",
                 (user_id,),
             )
             rows = cursor.fetchall()
