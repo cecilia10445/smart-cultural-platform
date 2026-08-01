@@ -22,14 +22,14 @@
       <main class="conversation-stage" aria-live="polite">
         <div v-if="sessionLoadingById[currentSessionId] && !currentSession" class="empty-state">正在打开这个设计对话…</div>
         <template v-else-if="currentSession || isNewDraft">
-          <header class="conversation-stage__header"><div><p class="section-index">当前对话</p><h3>{{ currentTitle }}</h3></div><span :class="['state-pill', currentSession.status]">{{ statusLabel(currentSession.status) }}</span></header>
+          <header class="conversation-stage__header"><div><p class="section-index">当前对话</p><h3>{{ currentTitle }}</h3></div><span :class="['state-pill', currentSession?.status || 'draft']">{{ statusLabel(currentSession?.status || 'draft') }}</span></header>
           <section class="message-list" aria-label="消息历史">
             <article v-for="message in currentMessages" :key="message.id" :class="['message', message.role]">
               <span class="message__speaker">{{ message.role === 'user' ? '你' : '设计助手' }}</span>
               <template v-if="message.structured_output"><OutputCard :output="message.structured_output" @confirm="confirmAction" /></template>
               <p v-else>{{ message.text }}</p><time>{{ formatTime(message.created_at) }}</time>
             </article>
-            <div v-if="pendingBySessionId[currentSessionId]" class="agent-thinking"><span></span>Agent 正在分析当前会话…</div>
+            <div v-if="pendingBySessionId[draftKey]" class="agent-thinking"><span></span>Agent 正在分析当前会话…</div>
             <p v-if="!currentMessages.length" class="empty-state">从一句产品需求开始，让这份设计慢慢成形。</p>
           </section>
           <section v-if="runtimeBySessionId[currentSessionId]" class="turn-meta">
@@ -37,7 +37,7 @@
           </section>
           <form class="agent-composer" @submit.prevent="send">
             <textarea v-model="draftBySessionId[draftKey]" rows="4" :disabled="Boolean(pendingBySessionId[draftKey])" placeholder="继续补充产品、场景、风格或希望避免的方向…"></textarea>
-            <div><small>纯文本协作，不会在此页面生成图片。</small><button type="submit" class="primary-button" :disabled="!currentDraft.trim() || Boolean(pendingBySessionId[currentSessionId])">发送</button></div>
+            <div><small>纯文本协作，不会在此页面生成图片。</small><button type="submit" class="primary-button" :disabled="!currentDraft.trim() || Boolean(pendingBySessionId[draftKey])">发送</button></div>
           </form>
         </template>
         <div v-else class="empty-state"><button type="button" class="primary-button" @click="create">开始新的文创对话</button></div>
