@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - production dependency is required
     pymysql = None
 
 from backend.domain.agent_dialogue import (
+    AgentDialogueError,
     AgentPersistenceUnavailable,
     AgentSessionNotFound,
     AgentSessionStateConflict,
@@ -45,7 +46,7 @@ class AgentDialogueRepository:
             with connection.cursor(pymysql.cursors.DictCursor) as cursor:
                 yield cursor
             connection.commit()
-        except (AgentSessionNotFound, AgentSessionStateConflict, AgentSessionVersionConflict):
+        except AgentDialogueError:
             if connection:
                 connection.rollback()
             raise
