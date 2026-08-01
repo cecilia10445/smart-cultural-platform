@@ -1,4 +1,4 @@
-# 智能文创平台
+# Smart Cultural Platform
 
 > **A Human-in-the-loop Cultural Creative Design Agent**
 
