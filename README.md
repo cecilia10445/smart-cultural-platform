@@ -1,12 +1,12 @@
 # Smart Cultural Platform
 
-> **A Human-in-the-loop Cultural Creative Design Agent**
+> **A ReAct-style Cultural Creative Agent Platform with Human-in-the-loop Actions**
 
-面向博物馆文创、文化 IP 衍生品和数字内容创作的工程化 AI Agent 平台。它以自然语言协作为入口，把文化研究、设计讨论、方案沉淀与图片生成组织为一条可追踪、可审批、可恢复的设计过程，而不是一次性 Prompt 包装器或固定表单生成器。
+面向博物馆文创、文化 IP 衍生品和数字内容创作的工程化 AI Agent 平台。它以自然语言协作为入口，将文化研究、方案推演、正式产物沉淀与图片生成组织为一套可追踪、可审批、可恢复的非线性 Agent 协作系统，而不是一次性 Prompt 包装器或固定表单生成器。
 
-传统生成式应用通常是“一次输入 → 一次结果”。本项目将持续 Conversation、可切换的设计目标、版本化设计产物和有副作用的业务命令分层建模：用户可以先研究文化意象、比较方案或讨论修改；只有在需要保存正式设计稿、生成图片或归档设计时，系统才进入明确的 Human-in-the-loop确认路径。
+传统生成式应用通常是“一次输入 → 一次结果”。本项目将持续 Conversation、可切换的设计目标、版本化设计产物和有副作用的业务命令分层建模：用户可以在持续对话中研究文化意象、比较设计方向、解释方案或批评文字稿；模型也可以在策略约束下自主选择直接回答、调用只读工具或提出结构化业务动作。当系统准备写入正式 Artifact、改变设计任务状态或调用图片生成等外部能力时，则进入明确的 Human-in-the-loop 审批链路，由用户决定是否执行。
 
-运行时采用基于 Function Calling 与 Tool Call / Observation 回注的 ReAct-style Runtime。模型负责在上下文中选择直接回答或请求只读工具；Tool Policy、Action Policy 和服务端事务负责约束能力边界。这样既保留开放式对话的灵活性，也让正式产物、成本动作和历史版本保持可控。
+运行时采用基于 Function Calling 与 Tool Call / Observation 回注的 ReAct-style Runtime。ReAct-style Runtime 允许模型结合 Task Context，在直接回答、调用受控只读工具和提出结构化 Business Action 之间自主决策；Tool Policy、Action Policy、Human-in-the-loop 审批与事务型 Executor 则构成确定性的执行控制面。
 
 ## 核心能力
 
@@ -15,15 +15,19 @@
 | 自然语言协作 | 文化资料研究、设计方向讨论、方案比较、文字稿批评、非正式创意探索，以及图片结果后的继续对话。 |
 | ReAct-style Runtime | Pydantic AI 适配器、结构化 Function Calling、Tool Registry、Tool Policy、Tool Executor、Observation 回注、调用预算、运行事件与安全 Trace。 |
 | Human-in-the-loop Action | Agent 只提出业务动作；服务端验证来源 Proposal；用户 approve / reject 后才允许执行副作用。 |
-| Task-scoped Context | Conversation 与具体设计目标分离；消息、Runtime Run 与摘要可按 Design Task 隔离；没有 Task 时仍可普通聊天。 |
+| Task-scoped Context | Conversation 与 Design Task 分层建模；近期消息、增量摘要、Runtime Run 和最新 confirmed Artifact 按 Task 组装上下文，防止多设计目标之间发生上下文污染，并支持无 Task 的开放式探索对话。 |
 | Artifact 版本化 | Brief、产品文字设计稿、视觉方向、正式图片提示与生成图片均可保存为不可变 Artifact；支持 confirmed、superseded、父子版本关系与历史保留。 |
 | 图片 Action | 支持 Conversation Snapshot、Confirmed Artifact 和旧图片再生成三种来源；以 generation_logs 记录追加式生成事实，并产生 generated_image Artifact。 |
 | Agent Workspace | Vue 全高三栏工作区：多 Conversation、当前设计、设计档案、图片版本与上下文确认卡；协作式设计为默认创作入口。 |
-| 快速生成 | 保留结构化 Brief 驱动的快速生成、历史记录、评分与下载能力，与协作式设计并列可用。 |
+| 兼容业务通道 | 保留结构化 Brief 驱动的快速生成、历史记录、评分与下载能力，与 Agent 工作区共享既有业务基础设施，同时保持独立交互语义。 |
+| Agent Governance | 通过 Tool Policy、Action Policy、调用预算、owner scope、服务端快照和显式审批，将模型决策与业务执行隔离。 |
 
-## 从固定 Workflow 到可控 Agent
 
-文创设计会在研究、讨论、比较、试稿和修改之间反复切换。平台不会把用户锁定在单一的“Brief → 文案 → 图片 → 结束”页面流程中：
+## Hybrid Agent Orchestration：ReAct 与确定性 Workflow 协同
+
+平台采用开放式推理与确定性执行相结合的混合编排架构。ReAct Runtime 负责理解意图、选择工具、消费 Observation 和形成自然语言结果；Workflow Boundary 与 Policy Layer 负责状态约束、权限、幂等和数据一致性；Human-in-the-loop 则位于正式产物写入、任务状态变化与外部生成调用的授权点。
+
+这种设计既避免将用户锁定在固定页面流程中，也避免让模型直接控制数据库和外部副作用。
 
 ```text
 自然对话
@@ -89,6 +93,10 @@ sequenceDiagram
         Tool-->>Runtime: structured Observation
         Runtime->>Model: observation-backed follow-up
         Model-->>Runtime: final ConversationReply
+    else business action proposal
+        Model-->>Runtime: ConversationReply + Business Action
+        Runtime->>Policy: validate proposal and source run
+        Policy-->>User: explicit approval request
     end
     Runtime-->>User: natural-language response first
 ```
@@ -116,15 +124,15 @@ erDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> requested: server validates runtime proposal
+    [*] --> requested: validated runtime proposal
     requested --> approved: user approves
     requested --> rejected: user rejects
     approved --> running: executor claims
     running --> completed: effect persisted
-    running --> failed: safe failure
-    running --> recovery_required: external outcome is uncertain
-    recovery_required --> running: verified recovery only
+    running --> failed: confirmed failure
+    running --> running: external outcome pending
 ```
+当外部 Provider 已可能成功但本地持久化结果不确定时，Action 保持受保护的执行状态，并通过 external_outcome_status 标记为 unknown 或 persistence pending。后续请求返回 ACTION_EXECUTION_RECOVERY_REQUIRED，系统不会盲目再次调用 Provider。
 
 `requested`、`approved`、`rejected`、`running`、`completed` 与 `failed` 是 Action 合同状态。`recovery_required` 是外部图片结果不确定时的保护性响应：系统停止自动重试，避免重复扣费或重复产物；它不是把一次图片生成伪装成理论上的绝对 exactly-once 调用。
 
@@ -148,11 +156,13 @@ stateDiagram-v2
 - Artifact Proposal 与正式 Artifact 分离，非正式构思不会被静默写入设计档案；
 - 输出投影避免向前端泄漏内部协议文本、完整 Provider 原始响应或隐藏思维链。
 
-这条链路对应 Prompt Engineering、Schema Validation、Output Repair 与 Provider Adapter 等 AI 应用工程能力。
+这套输出链路将 Prompt Engineering 从单纯的指令编写扩展为可验证的模型协议：Prompt 负责行为边界，Pydantic Schema 负责结构约束，Output Repair 处理 Provider 偏差，Fallback 则保证异常输出不会被误解释为业务命令。
 
 ### Tool、Skill 与 Policy 边界
 
-设计对话注册了受控只读工具，包括当前设计状态检查、文化知识检索、版本化设计 Skill 加载和正式候选约束校验。工具返回的是结构化 Observation，Runtime 不把工具内部实现直接暴露给模型或客户端。
+Tool System 将模型的能力选择与真实执行解耦：模型只能生成符合 Schema 的 Tool Call，Registry 定义能力合同，Policy 执行风险和预算裁决，Executor 承担受控执行，并将结果转换为结构化 Observation 回注 Runtime。
+
+设计对话注册了受控只读工具，包括当前设计状态检查、文化知识检索、版本化设计 Skill 加载和正式候选约束校验。工具返回的是结构化 Observation，模型只感知工具的结构化能力合同与安全 Observation，不依赖工具内部实现；客户端也不能绕过 Policy 直接调用底层能力。
 
 - **Tool Registry** 管理名称、输入输出模型、风险等级、可用 Agent 与调用上限；
 - **Tool Policy** 审核工具、风险和预算；
@@ -160,9 +170,9 @@ stateDiagram-v2
 - **Skill Registry** 加载固定版本的文创表达与产品呈现指南；
 - 本地 RAG 以 BM25、`jieba` 和文化语料提供证据。资料不足时使用 `creative_only` 语义，不把创意联想包装成历史事实。
 
-### Task-scoped Context，而不是跨会话记忆
+### Task-scoped Context Engineering
 
-`RuntimeContextBuilder` 以 `session_id` 和可选 `task_id` 组织上下文：当前 Task 的近期消息、对应摘要和最新 confirmed Artifact 可以进入本轮输入；其他 Task 的消息、摘要、产物、约束和未解决问题不会混入。没有 Task 时，系统只使用 Conversation 层的通用上下文，仍支持研究和普通设计讨论。
+RuntimeContextBuilder 将 Session / Task 内的上下文管理与用户级长期记忆解耦。当前 Task 的近期消息、增量摘要和最新 confirmed Artifact 进入本轮上下文，其他 Task 的内容不会混入，从而在长对话和多设计目标场景中保持语义连续性与作用域隔离。该层专注于运行时 Context 生命周期，不将会话摘要与用户长期 Memory 混为同一概念。
 
 Context Summary 采用受预算约束的增量压缩与 scope key，保存事实来源类别，避免把所有历史消息、完整工具观察或旧版本全文重复发送给模型。它是 Session / Task 内的上下文管理，不被描述为跨 Session 用户 Memory。
 
@@ -202,7 +212,7 @@ Runtime Run、Runtime Event、工具请求/完成事件、预算快照和稳定�
 
 - 新对话先作为本地草稿存在，首条消息发送时才创建持久 Session；
 - Session 切换保留各自的草稿、消息、错误与当前设计，不串状态；
-- “当前设计”是 Design Task 的产品化名称，可轻量创建和选择；
+-“当前设计”是 Design Task 的产品化映射；用户可以在同一 Conversation 中创建和切换多个设计目标，Runtime Context、正式 Artifact、待处理 Action 与图片版本随 Task 作用域同步切换；
 - Assistant Turn 会携带当前 `task_id`；Task 切换后，下一轮上下文与档案随之切换；
 - 未保存 Proposal 只出现在对话流中，执行完成的正式 Artifact 才进入右侧设计档案；
 - 图片版本保留父子关系，生成后输入框仍可继续对话；
@@ -213,11 +223,13 @@ Runtime Run、Runtime Event、工具请求/完成事件、预算快照和稳定�
 ### 1. 普通设计讨论
 
 ```text
-用户提出文创需求
-→ Runtime 构建 Task-scoped Context
-→ 模型直接返回自然语言方案
-→ 不创建 Artifact，也不触发副作用
-→ Conversation 继续
+用户提出研究、比较或设计批评需求
+→ Runtime 组装 Conversation / Task Context
+→ 模型自主选择直接回答或调用只读工具
+→ Tool Observation 回注模型
+→ 输出经过 Schema 校验的自然语言回复
+→ 不产生未经确认的业务副作用
+→ Conversation 持续演进
 ```
 
 ### 2. 保存正式 Brief
@@ -420,8 +432,10 @@ npm run test:e2e
 - API Key、完整 Provider 原始响应、内部 Tool Observation 与隐藏 Chain-of-Thought 不进入用户可见 DTO、Artifact 或 Action Trace；
 - 图片外部结果不确定时阻止自动重试，等待明确恢复处理，避免重复费用与重复产物。
 
-## 当前项目边界与改进方向
+## 架构价值
 
-平台聚焦文创设计场景中的持续对话、受控工具调用、正式设计产物沉淀与需确认的生成动作。它以 Conversation、Design Task、Artifact、Action 和 Runtime Run 的分层合同支撑多轮协作，并保留快速生成与既有历史能力。
+本项目将开放式模型推理与确定性业务执行分层：ReAct Runtime 负责理解上下文、选择工具和形成建议；Policy 与 Workflow Boundary 提供权限、预算、状态和数据一致性约束；Human-in-the-loop 控制正式产物写入和外部副作用；Task-scoped Context 与不可变 Artifact 则保证多轮协作中的语义连续性和结果可追溯性。
+
+这种架构不依赖固定的页面步骤，也不允许模型直接控制业务数据。新增设计 Skill、检索工具、模型 Provider 或 Artifact 类型时，可以沿用既有 Registry、Policy、Action 和版本合同进行扩展，而无需重写 Conversation 主流程。
 
 在这一边界内，后续可以围绕更丰富的文化资料覆盖、更多可配置的设计 Skill、Provider 结果恢复体验和端到端可观测性继续增强；这些演进保持在现有的 Task-scoped Context、Human-in-the-loop 与追加式生成记录边界之内，不改变正式产物可追溯、用户确认副作用和图片版本保留的核心原则。
