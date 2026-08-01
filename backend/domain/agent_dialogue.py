@@ -272,6 +272,7 @@ class AgentMessageResponse(BaseModel):
     message_type: str
     text: str
     created_at: str
+    structured_output: dict[str, Any] | None = None
 
 
 class AgentStepErrorResponse(BaseModel):
@@ -396,6 +397,25 @@ class AgentSessionEnvelope(BaseModel):
     data: AgentSessionDetailResponse
 
 
+class AgentSessionListItemResponse(BaseModel):
+    """Compact owner-scoped list projection for the text workspace."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    title: str
+    status: AgentSessionStatus
+    updated_at: str
+    has_pending_action: bool = False
+
+
+class AgentSessionListEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"] = "success"
+    request_id: str
+    data: list[AgentSessionListItemResponse]
+
+
 def _json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -447,6 +467,21 @@ def _brief_projection(value: Any) -> BriefSummaryResponse | None:
         style=_text(raw.get("style")),
         design_constraints=_text_list(raw.get("design_constraints")),
         assumptions=_text_list(raw.get("assumptions")),
+    )
+
+
+def project_agent_session_list_item(session_row: Mapping[str, Any]) -> AgentSessionListItemResponse:
+    brief = _brief_projection(session_row.get("brief_json"))
+    status = _status(session_row.get("status"))
+    title = (brief.product_type if brief and brief.product_type else None) or "新建文创对话"
+    return AgentSessionListItemResponse(
+        session_id=str(session_row.get("id", "")), title=title[:80], status=status,
+        updated_at=_iso(session_row.get("updated_at")),
+        has_pending_action=status in {
+            AgentSessionStatus.WAITING_BRIEF_CONFIRMATION,
+            AgentSessionStatus.WAITING_TEXT_FEEDBACK,
+            AgentSessionStatus.WAITING_IMAGE_CONFIRMATION,
+        },
     )
 
 
@@ -534,6 +569,11 @@ def project_agent_session_detail(
             role=AgentMessageRole(row.get("role") if row.get("role") in {item.value for item in AgentMessageRole} else "system"),
             message_type=_text(row.get("message_type")) or "system", text=_text(row.get("content_text")) or "",
             created_at=_iso(row.get("created_at")),
+            structured_output=(
+                _json_object(row.get("content_json")).get("output")
+                if row.get("message_type") == "runtime_result" and isinstance(_json_object(row.get("content_json")).get("output"), dict)
+                else None
+            ),
         )
         for row in (message_rows or [])
     ]

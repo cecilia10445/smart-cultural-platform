@@ -1,284 +1,100 @@
 <template>
-  <section class="agent-panel" aria-labelledby="agent-design-title">
-    <header>
-      <div class="agent-header-row">
-        <div>
-          <p class="section-index">{{ historyView ? '协作式设计记录' : '协作式设计' }}</p>
-          <h2 id="agent-design-title">{{ historyView ? '协作式设计记录' : 'AI 文创产品设计助手' }}</h2>
-          <p>{{ historyView ? '这是一次已完成创作的只读回顾，不会再次调用模型或生成图片。' : '用一句话描述需求，助手会补全产品方案。确认后可修改设计文本最多四次，再形成视觉方向。' }}</p>
-        </div>
-        <div class="agent-header-actions">
-          <button v-if="historyView" type="button" class="secondary-button" @click="returnToHistory">返回全部创作记录</button>
-          <button v-else type="button" class="secondary-button" @click="returnToHistory">协作式历史记录</button>
-          <button v-if="historyView" type="button" class="primary-button" @click="startNew">开始新的协作设计</button>
-        </div>
-      </div>
+  <section class="agent-workspace" aria-labelledby="agent-design-title">
+    <header class="agent-workspace__header">
+      <div><p class="section-index">协作式设计</p><h2 id="agent-design-title">文创 Agent 工作区</h2><p>每个对话独立保存需求、设计状态与上下文；图片将在方案确认后开放。</p></div>
+      <button type="button" class="secondary-button" @click="$emit('return-to-history')">协作式历史记录</button>
     </header>
+    <p v-if="errorBySessionId[currentSessionId]" class="agent-error" role="alert">{{ errorBySessionId[currentSessionId] }}</p>
 
-    <p v-if="notice" class="agent-notice" role="status">{{ notice }}</p>
-    <p v-if="error" class="agent-error" role="alert">{{ error }}</p>
-    <div v-if="loading && !session" class="agent-empty">正在读取协作会话。</div>
+    <div class="agent-workspace__grid">
+      <aside class="session-rail" aria-label="设计对话列表">
+        <button type="button" class="new-session" :disabled="creating" @click="create"><span>＋</span> 新建对话</button>
+        <p v-if="sessionsLoading" class="rail-note">正在读取对话…</p>
+        <nav v-else class="session-list">
+          <button v-for="item in sessions" :key="item.session_id" type="button" :class="['session-item', { active: item.session_id === currentSessionId }]" @click="select(item.session_id)">
+            <span class="session-item__title">{{ item.title }}</span><small>{{ statusLabel(item.status) }} · {{ formatShortDate(item.updated_at) }}</small>
+            <i v-if="item.has_pending_action" aria-label="有待确认事项">●</i><i v-else-if="pendingBySessionId[item.session_id]" class="session-item__busy" aria-label="正在处理">●</i>
+          </button>
+        </nav>
+      </aside>
 
-    <div v-else class="agent-layout">
-      <main>
-        <template v-if="session">
-          <section class="dialogue" aria-label="协作消息">
-            <article v-for="messageItem in session.messages" :key="messageItem.id" :class="['bubble', messageItem.role]">
-              <strong>{{ messageItem.role === 'user' ? '你' : '设计助手' }}</strong>
-              <p>{{ messageItem.text }}</p>
+      <main class="conversation-stage" aria-live="polite">
+        <div v-if="sessionLoadingById[currentSessionId] && !currentSession" class="empty-state">正在打开这个设计对话…</div>
+        <template v-else-if="currentSession">
+          <header class="conversation-stage__header"><div><p class="section-index">当前对话</p><h3>{{ currentTitle }}</h3></div><span :class="['state-pill', currentSession.status]">{{ statusLabel(currentSession.status) }}</span></header>
+          <section class="message-list" aria-label="消息历史">
+            <article v-for="message in currentMessages" :key="message.id" :class="['message', message.role]">
+              <span class="message__speaker">{{ message.role === 'user' ? '你' : '设计助手' }}</span>
+              <template v-if="message.structured_output"><OutputCard :output="message.structured_output" @confirm="confirmAction" /></template>
+              <p v-else>{{ message.text }}</p><time>{{ formatTime(message.created_at) }}</time>
             </article>
-            <p v-if="!session.messages.length" class="agent-empty">从一句产品需求开始吧。</p>
+            <div v-if="pendingBySessionId[currentSessionId]" class="agent-thinking"><span></span>Agent 正在分析当前会话…</div>
+            <p v-if="!currentMessages.length" class="empty-state">从一句产品需求开始，让这份设计慢慢成形。</p>
           </section>
-
-          <section v-if="session.brief_summary" class="summary-card">
-            <h3>我理解的需求</h3>
-            <dl>
-              <div><dt>文化主题</dt><dd>{{ session.brief_summary.cultural_theme || '—' }}</dd></div>
-              <div><dt>产品类型</dt><dd>{{ session.brief_summary.product_type || '—' }}</dd></div>
-              <div><dt>使用场景</dt><dd>{{ session.brief_summary.use_case || '—' }}</dd></div>
-              <div><dt>风格</dt><dd>{{ session.brief_summary.style || '—' }}</dd></div>
-            </dl>
-            <p v-if="session.brief_summary.design_constraints?.length">约束：{{ session.brief_summary.design_constraints.join('；') }}</p>
-            <p v-if="session.brief_summary.assumptions?.length">主动补充：{{ session.brief_summary.assumptions.join('；') }}</p>
+          <section v-if="runtimeBySessionId[currentSessionId]" class="turn-meta">
+            <span v-for="name in runtimeBySessionId[currentSessionId].safe_tool_events || []" :key="name">{{ toolLabel(name) }}</span>
           </section>
-
-          <section v-if="session.product_design" class="summary-card">
-            <h3>{{ session.product_design.product_name || '产品设计方案' }}</h3>
-            <dl>
-              <div v-for="field in designFields" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ session.product_design[field.key] || '—' }}</dd></div>
-            </dl>
-            <h4>核心卖点</h4>
-            <ul><li v-for="point in session.product_design.selling_points" :key="point">{{ point }}</li></ul>
-            <p>资料状态：{{ session.product_design.evidence_status || '—' }} · 文本 Skill：{{ session.product_design.selected_text_skill || '—' }}</p>
-          </section>
-
-          <section v-if="session.visual_direction" class="summary-card visual-card">
-            <h3>视觉方向</h3>
-            <p>{{ session.visual_direction.summary || '视觉方向已准备。' }}</p>
-            <dl>
-              <div v-for="field in visualFields" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ session.visual_direction[field.key] || '—' }}</dd></div>
-            </dl>
-            <p>避免项：{{ (session.visual_direction.avoid || session.visual_direction.negative_constraints || []).join('；') || '—' }}</p>
-            <p>视觉 Skill：{{ session.visual_direction.selected_visual_skill || '默认视觉规则' }}</p>
-          </section>
-
-          <section v-if="session.status === 'completed'" class="summary-card final-card">
-            <h3>{{ session.final_result?.product_name || session.product_design?.product_name || '最终设计结果' }}</h3>
-            <div v-if="session.final_result?.image_url" class="final-image">
-              <img :src="session.final_result.image_url" :alt="session.final_result.product_name || '文创产品最终图片'" @error="handleImageError">
-            </div>
-            <p v-else class="agent-error">结果暂时无法展示；产品设计文本与创作记录仍可查看。</p>
-            <dl>
-              <div><dt>文化资料状态</dt><dd>{{ session.final_result?.evidence_status || session.product_design?.evidence_status || '—' }}</dd></div>
-              <div><dt>文本 Skill</dt><dd>{{ session.final_result?.selected_text_skill || session.product_design?.selected_text_skill || '—' }}</dd></div>
-              <div><dt>视觉 Skill</dt><dd>{{ session.final_result?.selected_visual_skill || session.visual_direction?.selected_visual_skill || '—' }}</dd></div>
-              <div><dt>生成耗时</dt><dd>{{ session.final_result?.generation_time ?? '—' }} 秒</dd></div>
-              <div><dt>记录编号</dt><dd>{{ session.generation_log_id || '—' }}</dd></div>
-              <div><dt>创建时间</dt><dd>{{ formatDate(session.created_at) }}</dd></div>
-              <div><dt>完成时间</dt><dd>{{ formatDate(session.completed_at || session.updated_at) }}</dd></div>
-            </dl>
-          </section>
-
-          <section v-if="historyView" class="summary-card history-readonly-card">
-            <h3>历史回顾</h3>
-            <p>修订次数：{{ session.revision_count }} / 4 · generation_log_id：{{ session.generation_log_id || '—' }}</p>
-            <p>创建时间：{{ formatDate(session.created_at) }} · 完成时间：{{ formatDate(session.completed_at || session.updated_at) }}</p>
-          </section>
+          <form class="agent-composer" @submit.prevent="send">
+            <textarea v-model="draftBySessionId[currentSessionId]" rows="3" :disabled="Boolean(pendingBySessionId[currentSessionId])" placeholder="继续补充产品、场景、风格或希望避免的方向…"></textarea>
+            <div><small>纯文本协作，不会在此页面生成图片。</small><button type="submit" class="primary-button" :disabled="!currentDraft.trim() || Boolean(pendingBySessionId[currentSessionId])">发送</button></div>
+          </form>
         </template>
-
-        <section v-if="session && !historyView">
-          <AgentDecisionCard :status="session.status" :revision-count="session.revision_count" :busy="decisionBusy" @decide="decide" />
-        </section>
-
-        <form v-if="inputCopy" class="agent-input" @submit.prevent="send">
-          <label for="agent-message">{{ inputCopy.title }}</label>
-          <p>{{ inputCopy.description }}</p>
-          <textarea id="agent-message" v-model="message" rows="3" :disabled="loading || decisionBusy" :placeholder="inputCopy.placeholder"></textarea>
-          <button type="submit" class="secondary-button" :disabled="!message.trim() || loading || decisionBusy">{{ loading ? '正在整理' : inputCopy.button }}</button>
-        </form>
-
-        <p v-else-if="session && !historyView && session.status === 'waiting_image_confirmation'" class="agent-notice">第一版暂不支持修改图片或重新生成图片，请确认当前视觉方向。</p>
-        <p v-else-if="session && !historyView && session.status === 'generating_image'" class="agent-notice">正在真实生成图片，请不要重复操作。</p>
-        <p v-else-if="session && !historyView && session.status === 'failed'" class="agent-error">{{ session.error?.message || '此阶段未能完成，请查看协作过程中的错误信息。' }}</p>
-
-        <section v-if="canStartNew" class="restart-actions" aria-label="开始新的创作">
-          <button type="button" class="secondary-button" :disabled="loading || decisionBusy" @click="startNew">开始新的协作设计</button>
-        </section>
-
-        <section v-if="session && session.status === 'completed' && !historyView" class="completion-actions" aria-label="完成后的操作">
-          <h3>本次协作设计已完成</h3>
-          <p>可以保留这份记录，或从一段全新的需求开始下一次创作。</p>
-          <div>
-            <button type="button" class="primary-button" @click="startNew">开始新的协作设计</button>
-          </div>
-        </section>
+        <div v-else class="empty-state"><button type="button" class="primary-button" @click="create">开始新的文创对话</button></div>
       </main>
-      <aside v-if="session"><AgentDialogueTimeline :steps="session.steps" /></aside>
+
+      <aside class="design-state" aria-label="当前设计状态">
+        <template v-if="currentSession"><p class="section-index">设计状态</p><h3>当前会话速览</h3>
+          <StateGroup title="当前目标" :items="[currentSession.brief_summary?.cultural_theme || currentSession.brief_summary?.product_type || '等待你提出第一个设计目标']" />
+          <StateGroup title="已确认约束" tone="confirmed" :items="currentSession.brief_summary?.design_constraints || []" />
+          <StateGroup title="暂定偏好" tone="tentative" :items="currentSession.brief_summary?.assumptions || []" />
+          <StateGroup title="当前 Brief" :items="briefItems" />
+          <StateGroup title="未解决问题" :items="unresolvedItems" />
+          <section class="state-group"><h4>文化资料</h4><p>{{ ragLabel }}</p><small v-if="skillItems.length">已加载：{{ skillItems.join('、') }}</small></section>
+          <section class="state-group context-state"><h4>上下文</h4><p>{{ contextCopy }}</p><small v-if="context.summary_version">摘要版本 {{ context.summary_version }} · 保留最近 {{ context.recent_messages_included || 0 }} 条</small></section>
+          <section class="state-group"><h4>图片</h4><p>将在方案确认后开放</p></section>
+        </template>
+        <p v-else class="rail-note">选择一个对话后查看其独立设计状态。</p>
+      </aside>
     </div>
   </section>
 </template>
 
 <script>
-import AgentDialogueTimeline from './AgentDialogueTimeline.vue'
-import AgentDecisionCard from './AgentDecisionCard.vue'
-import { createSession, getSession, sendMessage, submitDecision } from '../services/agentDialogueApi'
+import { createClientId } from '../utils/clientId'
+import { createSession, getSession, listSessions, runAssistantTurn, submitDecision } from '../services/agentDialogueApi'
 
-const INITIAL_INPUT = {
-  title: '描述你的文创产品需求',
-  description: '用一句话描述文化主题、产品类型、使用场景和希望避免的设计方向。',
-  placeholder: '例如：以三兔共耳纹样设计一款现代桌面灯，强调环形动态感，避免仿古造型',
-  button: '开始设计',
+const StateGroup = { props: { title: String, items: { type: Array, default: () => [] }, tone: String }, template: '<section class="state-group"><h4>{{ title }}</h4><ul v-if="items.length" :class="tone"><li v-for="item in items" :key="item">{{ item }}</li></ul><p v-else>暂无</p></section>' }
+const OutputCard = {
+  props: { output: { type: Object, required: true } }, emits: ['confirm'],
+  computed: { result() { return this.output.result || this.output }, kind() { return this.result?.kind || 'direct_answer' }, briefRows() { const b = this.result?.brief || {}; return [['设计目标', b.design_goal || b.goal], ['产品类型', b.product_type], ['受众', b.target_audience], ['风格', b.style], ['材质／工艺', b.materials || b.material]] } },
+  template: `<section :class="['output-card', kind]"><template v-if="kind === 'ask_user'"><strong>需要你补充</strong><h4>{{ result.question }}</h4><p>{{ result.reason_summary || '当前资料不足，需要你补充后继续。' }}</p></template><template v-else-if="kind === 'propose_brief'"><strong>候选 Brief</strong><dl><div v-for="row in briefRows" :key="row[0]" v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></div></dl><p>{{ result.summary }}</p><small v-if="result.evidence_source_ids?.length">文化证据：{{ result.evidence_source_ids.join('、') }}</small><small v-if="result.used_skill_ids?.length">设计方法：{{ result.used_skill_ids.join('、') }}</small></template><template v-else-if="kind === 'propose_design_revision'"><strong>设计修订建议</strong><p>{{ result.summary || result.reason }}</p><p v-if="result.affected_constraints?.length">涉及约束：{{ result.affected_constraints.join('、') }}</p></template><template v-else-if="kind === 'request_business_action'"><strong>需要确认的业务动作</strong><h4>{{ result.action_name }}</h4><p>{{ result.impact || result.reason_summary }}</p><button type="button" class="secondary-button" @click="$emit('confirm', result)">确认前继续讨论</button></template><template v-else><p>{{ result.answer || result.summary || '设计助手已整理当前建议。' }}</p></template></section>`,
 }
 
 export default {
-  name: 'AgentDesignPanel',
-  components: { AgentDialogueTimeline, AgentDecisionCard },
-  emits: ['return-to-history'],
-  data: () => ({
-    session: null,
-    message: '',
-    loading: false,
-    decisionBusy: false,
-    error: '',
-    notice: '',
-    historyView: false,
-    designFields: [
-      { key: 'design_concept', label: '设计理念' }, { key: 'cultural_translation', label: '文化转译' },
-      { key: 'structure', label: '结构' }, { key: 'materials', label: '材质' },
-      { key: 'color_plan', label: '配色' }, { key: 'usage_scene', label: '使用场景' },
-    ],
-    visualFields: [
-      { key: 'product_form', label: '产品形态' }, { key: 'materials', label: '材质' },
-      { key: 'color_plan', label: '色彩' }, { key: 'composition', label: '构图' },
-      { key: 'scene', label: '场景' }, { key: 'presentation_mode', label: '展示方式' },
-    ],
-  }),
+  name: 'AgentDesignPanel', components: { StateGroup, OutputCard }, emits: ['return-to-history'],
+  data: () => ({ sessions: [], sessionsById: {}, messagesBySessionId: {}, runtimeBySessionId: {}, draftBySessionId: {}, pendingBySessionId: {}, sessionLoadingById: {}, errorBySessionId: {}, currentSessionId: '', sessionsLoading: false, creating: false }),
   computed: {
-    canStartNew() {
-      return Boolean(this.session) && !this.historyView && !['completed', 'generating_image'].includes(this.session.status)
-    },
-    inputCopy() {
-      if (this.historyView) return null
-      const status = this.session?.status || 'created'
-      const revisionCount = this.session?.revision_count || 0
-      return {
-        created: INITIAL_INPUT,
-        extracting_brief: { ...INITIAL_INPUT, description: '正在理解你的需求。', placeholder: '请等待需求理解完成' },
-        waiting_brief_confirmation: { title: '补充或修改需求理解', description: '可以修改其中一部分，也可以要求 Agent 全部重新理解。', placeholder: '例如：材质改成磨砂金属；或“全部重新理解，改成现代胸针”', button: '发送修改' },
-        waiting_text_feedback: { title: '提出设计方案修改意见', description: `已修改 ${revisionCount} 次，还可修改 ${Math.max(0, 4 - revisionCount)} 次。`, placeholder: '例如：名称保留，材质改成磨砂金属，颜色不要大红色', button: '修改方案' },
-      }[status] || null
-    },
+    currentSession() { return this.sessionsById[this.currentSessionId] || null }, currentMessages() { return this.messagesBySessionId[this.currentSessionId] || [] }, currentDraft() { return this.draftBySessionId[this.currentSessionId] || '' }, currentTitle() { return this.sessions.find((item) => item.session_id === this.currentSessionId)?.title || this.currentSession?.brief_summary?.product_type || '新建文创对话' },
+    context() { return this.runtimeBySessionId[this.currentSessionId]?.context_metadata || {} }, contextCopy() { return this.context.compression_triggered ? '已整理较早的对话历史，关键目标和约束仍被保留' : '当前会话上下文正常' },
+    briefItems() { const b = this.currentSession?.brief_summary; return b ? [b.product_type, b.use_case, b.style].filter(Boolean) : [] }, unresolvedItems() { const last = [...this.currentMessages].reverse().find((item) => item.structured_output?.result?.kind === 'ask_user'); return last ? (last.structured_output.result.missing_fields || ['等待你的补充']) : [] },
+    skillItems() { return this.currentMessages.flatMap((item) => item.structured_output?.result?.used_skill_ids || []) }, ragLabel() { const output = [...this.currentMessages].reverse().find((item) => item.structured_output)?.structured_output?.result || {}; return output.evidence_source_ids?.length ? '找到可引用的文化资料' : (output.kind === 'ask_user' ? '需要补充主题、产品或场景' : '当前文库没有可靠匹配，可按纯创意方向继续') },
   },
-  async mounted() {
-    const query = new URLSearchParams(window.location.search)
-    const id = query.get('agent_session_id')
-    this.historyView = query.get('view') === 'history'
-    if (id) await this.restore(id)
-  },
+  async mounted() { window.addEventListener('popstate', this.restoreFromUrl); await this.loadSessions(); await this.restoreFromUrl() }, beforeUnmount() { window.removeEventListener('popstate', this.restoreFromUrl) },
   methods: {
-    setQuery(id) {
-      const url = new URL(window.location.href)
-      url.searchParams.set('agent_session_id', id)
-      window.history.replaceState({}, '', url)
-    },
-    clearAgentQuery() {
-      const url = new URL(window.location.href)
-      url.searchParams.delete('agent_session_id')
-      url.searchParams.delete('view')
-      window.history.replaceState({}, '', url)
-    },
-    async create() {
-      this.loading = true
-      this.error = ''
-      try {
-        this.session = await createSession()
-        this.setQuery(this.session.session_id)
-      } catch (error) {
-        this.displayError(error)
-      } finally {
-        this.loading = false
-      }
-    },
-    async restore(id) {
-      this.loading = true
-      this.error = ''
-      try {
-        this.session = await getSession(id)
-        this.setQuery(id)
-      } catch (error) {
-        this.displayError(error)
-      } finally {
-        this.loading = false
-      }
-    },
-    async send() {
-      const text = this.message.trim()
-      if (!text || this.historyView) return
-      if (!this.session) {
-        await this.create()
-        if (!this.session) return
-      }
-      this.loading = true
-      this.error = ''
-      try {
-        this.session = await sendMessage(this.session.session_id, text, this.session.status, this.session.version)
-        this.message = ''
-      } catch (error) {
-        this.displayError(error)
-      } finally {
-        this.loading = false
-      }
-    },
-    async decide(action) {
-      if (!this.session || this.historyView || this.decisionBusy) return
-      this.decisionBusy = true
-      this.error = ''
-      this.notice = ''
-      try {
-        this.session = await submitDecision(this.session.session_id, action, this.session.status, this.session.version)
-        if (action === 'confirm_image_generation') this.notice = '视觉方向已确认，正在提交最终图片生成。'
-      } catch (error) {
-        this.displayError(error)
-      } finally {
-        this.decisionBusy = false
-      }
-    },
-    startNew() {
-      if (this.session && this.session.status !== 'completed' && !this.historyView && !window.confirm('当前方案尚未完成。开始新的协作设计不会删除这份记录，仍要继续吗？')) return false
-      this.session = null
-      this.message = ''
-      this.error = ''
-      this.notice = ''
-      this.historyView = false
-      this.clearAgentQuery()
-      return true
-    },
-    returnToHistory() {
-      this.$emit('return-to-history')
-    },
-    handleImageError(event) {
-      event.currentTarget.style.display = 'none'
-      this.notice = '图片暂时无法加载；产品设计文本与创作记录仍可查看。'
-    },
-    formatDate(value) {
-      if (!value) return '时间未记录'
-      const date = new Date(value)
-      return Number.isNaN(date.getTime()) ? '时间格式异常' : date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
-    },
-    displayError(error) {
-      this.error = error?.code === 'AGENT_DTO_INCOMPLETE'
-        ? '结果暂时无法展示，请稍后刷新。'
-        : error?.response?.status === 409
-          ? '当前方案状态已变化，请刷新后继续。'
-          : error?.kind === 'network'
-            ? '无法连接协作服务，请检查网络。'
-            : (error?.message || '协作服务暂时不可用。')
-    },
+    async loadSessions() { this.sessionsLoading = true; try { this.sessions = await listSessions() } catch (error) { this.errorBySessionId[this.currentSessionId] = this.errorText(error) } finally { this.sessionsLoading = false } },
+    setUrl(id) { const url = new URL(window.location.href); if (id) url.searchParams.set('agent_session_id', id); else url.searchParams.delete('agent_session_id'); window.history.pushState({}, '', url) },
+    async restoreFromUrl() { const id = new URLSearchParams(window.location.search).get('agent_session_id') || localStorage.getItem('agent_workspace_session'); if (id) await this.select(id, false) },
+    async create() { this.creating = true; try { const session = await createSession(); this.sessions = [{ session_id: session.session_id, title: '新建文创对话', status: session.status, updated_at: session.updated_at, has_pending_action: false }, ...this.sessions]; this.sessionsById[session.session_id] = session; this.messagesBySessionId[session.session_id] = session.messages; await this.select(session.session_id) } catch (error) { this.errorBySessionId[this.currentSessionId] = this.errorText(error) } finally { this.creating = false } },
+    async select(id, changeUrl = true) { if (changeUrl) this.setUrl(id); this.currentSessionId = id; localStorage.setItem('agent_workspace_session', id); if (!this.sessionsById[id]) await this.loadSession(id); },
+    async loadSession(id) { this.sessionLoadingById[id] = true; this.errorBySessionId[id] = ''; try { const session = await getSession(id); this.sessionsById[id] = session; this.messagesBySessionId[id] = session.messages || []; if (!this.sessions.some((item) => item.session_id === id)) await this.loadSessions() } catch (error) { this.errorBySessionId[id] = error?.response?.status === 404 ? '这个对话不存在或你无权访问。' : this.errorText(error) } finally { this.sessionLoadingById[id] = false } },
+    async send() { const id = this.currentSessionId; const text = this.currentDraft.trim(); if (!id || !text || this.pendingBySessionId[id]) return; const pending = this.pendingBySessionId[id] || { clientTurnId: createClientId(), text }; this.pendingBySessionId[id] = pending; this.errorBySessionId[id] = ''; try { const response = await runAssistantTurn(id, text, pending.clientTurnId); this.runtimeBySessionId[id] = response.data.display; this.draftBySessionId[id] = ''; delete this.pendingBySessionId[id]; await this.loadSession(id); await this.loadSessions() } catch (error) { this.errorBySessionId[id] = this.errorText(error); this.draftBySessionId[id] = text } },
+    async confirmAction(result) { if (!result?.decision || !this.currentSession) return; try { await submitDecision(this.currentSessionId, result.decision, this.currentSession.status, this.currentSession.version); await this.loadSession(this.currentSessionId) } catch (error) { this.errorBySessionId[this.currentSessionId] = this.errorText(error) } },
+    statusLabel(value) { return ({ created: '待开始', extracting_brief: '整理需求', waiting_brief_confirmation: '待确认', waiting_text_feedback: '可继续调整', completed: '已完成' })[value] || '协作中' }, toolLabel(name) { return ({ inspect_design_state: '已读取当前设计状态', search_cultural_knowledge: '已查询文化资料', load_design_skill: '已加载设计方法', validate_design_constraints: '已检查设计约束' })[name] || '已完成安全检查' },
+    formatShortDate(value) { const d = new Date(value); return Number.isNaN(d.getTime()) ? '刚刚' : d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) }, formatTime(value) { const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }, errorText(error) { return error?.response?.status === 404 ? '这个对话不存在或你无权访问。' : error?.kind === 'network' ? '无法连接协作服务，请稍后使用原 client_turn_id 重试。' : (error?.message || '协作服务暂时不可用。') },
   },
 }
 </script>
 
 <style scoped>
-.agent-panel{margin-top:1.25rem}.agent-panel header{padding-bottom:1rem;border-bottom:1px solid #d4cec2}.agent-header-row{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}.agent-header-actions{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;padding-top:.2rem}.agent-panel h2{margin:.2rem 0;color:#245244;font-size:clamp(1.45rem,3vw,2.2rem)}.agent-panel header p{margin:.25rem 0;color:#59655b;line-height:1.65}.agent-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(230px,.75fr);gap:1.25rem;margin-top:1.25rem}.dialogue{display:grid;gap:.7rem}.bubble{padding:.75rem .9rem;border:1px solid #d4cec2;background:#fffdf5}.bubble.user{background:#edf3ed;border-color:#bed0c1}.bubble strong{font-size:.78rem;color:#245244}.bubble p{white-space:pre-wrap;margin:.25rem 0 0;line-height:1.6}.summary-card{margin-top:1rem;border:1px solid #d4cec2;background:#fff;padding:1rem}.summary-card h3,.summary-card h4{margin:0 0 .65rem;color:#245244}.summary-card dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem;margin:0}.summary-card dt{font-size:.76rem;color:#697468}.summary-card dd{margin:.15rem 0 0;line-height:1.5}.summary-card p,.summary-card li{line-height:1.6}.summary-card ul{margin:.25rem 0;padding-left:1.1rem}.agent-input{margin-top:1rem;display:grid;gap:.5rem}.agent-input label{font-weight:600;color:#245244}.agent-input textarea{border:1px solid #aeb8ac;background:#fffdf5;padding:.7rem;font:inherit;resize:vertical}.agent-input button{justify-self:start}.agent-error,.agent-notice,.agent-empty{margin-top:1rem;padding:.75rem 1rem;background:#fff7ee;border-left:3px solid #b74b3c}.agent-notice{background:#f1f6ed;border-color:#245244}.agent-empty{color:#657066;border-color:#9ca69d}.restart-actions{margin-top:1rem}.completion-actions{margin-top:1rem;padding:1rem;border-top:2px solid #17221f;background:#f4f7f0}.completion-actions h3{margin:0;color:#245244}.completion-actions p{margin:.4rem 0 .9rem;line-height:1.6}.completion-actions div{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}.history-readonly-card{background:#f4f7f0}@media(max-width:760px){.agent-header-row{display:grid}.agent-header-actions{padding-top:0}.agent-layout{grid-template-columns:1fr}.summary-card dl{grid-template-columns:1fr}}
-.final-image{margin:.75rem 0;background:#f1f3ee}.final-image img{display:block;width:100%;max-height:480px;object-fit:contain}
+.agent-workspace{margin-top:1.25rem}.agent-workspace__header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding-bottom:1rem;border-bottom:1px solid #d4cec2}.agent-workspace h2{margin:.2rem 0;color:#245244;font-size:clamp(1.5rem,3vw,2.2rem)}.agent-workspace h3{margin:.1rem 0;color:#245244}.agent-workspace__header p{margin:.25rem 0;color:#59655b;line-height:1.6}.agent-workspace__grid{display:grid;grid-template-columns:220px minmax(0,1fr) 260px;gap:1rem;margin-top:1rem;min-height:560px}.session-rail,.design-state{background:#f4f1e8;border:1px solid #d8d0c0;padding:.8rem}.new-session{width:100%;border:1px dashed #245244;background:#edf3ed;color:#245244;padding:.7rem;font:inherit;font-weight:700}.new-session span{font-size:1.15rem}.session-list{display:grid;gap:.35rem;margin-top:.75rem}.session-item{position:relative;text-align:left;border:0;border-left:3px solid transparent;background:transparent;padding:.6rem .55rem;color:#405046;font:inherit}.session-item:hover,.session-item.active{background:#fffdf5;border-left-color:#b56d3c}.session-item__title{display:block;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-item small{display:block;color:#718075;margin-top:.2rem}.session-item i{position:absolute;right:.45rem;top:.6rem;color:#b56d3c;font-style:normal;font-size:.65rem}.session-item__busy{color:#245244!important;animation:pulse 1.2s infinite}.conversation-stage{border:1px solid #d4cec2;background:#fffdf7;display:flex;flex-direction:column;min-width:0}.conversation-stage__header{display:flex;justify-content:space-between;align-items:flex-start;padding:1rem 1rem .75rem;border-bottom:1px solid #e4ddd0}.state-pill{font-size:.76rem;padding:.25rem .45rem;background:#edf3ed;color:#245244}.message-list{display:grid;gap:.85rem;align-content:start;padding:1rem;overflow:auto;max-height:560px}.message{max-width:88%;padding:.75rem .9rem;background:#fff;border:1px solid #e0d9cd}.message.user{justify-self:end;background:#e9f1ec;border-color:#b9cfbf}.message__speaker{font-size:.75rem;color:#6b776d;font-weight:700}.message p{white-space:pre-wrap;line-height:1.65;margin:.3rem 0}.message time{font-size:.72rem;color:#879086}.agent-thinking{color:#5a695d;font-size:.9rem}.agent-thinking span{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;background:#b56d3c;margin-right:.45rem;animation:pulse 1s infinite}.agent-composer{margin-top:auto;border-top:1px solid #e4ddd0;padding:.8rem;display:grid;gap:.5rem}.agent-composer textarea{width:100%;box-sizing:border-box;border:1px solid #bfc7b9;background:#fff;padding:.65rem;font:inherit;resize:vertical}.agent-composer div{display:flex;justify-content:space-between;align-items:center;gap:.75rem}.agent-composer small{color:#697468}.design-state h3{margin-bottom:.85rem}.state-group{border-top:1px solid #d8d0c0;padding:.65rem 0}.state-group h4{margin:0 0 .3rem;color:#245244;font-size:.85rem}.state-group p,.state-group li,.state-group small{font-size:.82rem;line-height:1.55;color:#59655b}.state-group p{margin:0}.state-group ul{margin:.15rem 0;padding-left:1rem}.state-group .confirmed li::marker{color:#245244}.state-group .tentative li::marker{color:#b56d3c}.output-card{margin-top:.45rem;border-left:3px solid #245244;background:#f6f8f2;padding:.7rem}.output-card.ask_user{border-color:#b56d3c;background:#fff7ee}.output-card h4{margin:.35rem 0;color:#245244}.output-card p{margin:.3rem 0}.output-card small{display:block;color:#677067;margin-top:.25rem}.output-card dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.35rem;margin:.5rem 0}.output-card dt{font-size:.72rem;color:#697468}.output-card dd{margin:.08rem 0;font-size:.84rem}.turn-meta{display:flex;flex-wrap:wrap;gap:.35rem;padding:0 1rem .75rem}.turn-meta span{font-size:.75rem;background:#edf3ed;color:#245244;padding:.25rem .45rem}.empty-state,.rail-note{color:#697468;padding:1rem;text-align:center}.agent-error{padding:.7rem;background:#fff0ea;border-left:3px solid #b74b3c}@keyframes pulse{50%{opacity:.35}}@media(max-width:980px){.agent-workspace__grid{grid-template-columns:190px minmax(0,1fr)}.design-state{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.7rem}.design-state>.section-index,.design-state>h3{grid-column:1/-1}.state-group{border-top:0;border-left:1px solid #d8d0c0;padding-left:.65rem}}@media(max-width:680px){.agent-workspace__header{display:grid}.agent-workspace__grid{grid-template-columns:1fr}.session-rail{max-height:190px;overflow:auto}.design-state{display:block}.state-group{border-top:1px solid #d8d0c0;border-left:0;padding-left:0}.message{max-width:96%}}
 </style>

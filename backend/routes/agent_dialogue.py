@@ -131,6 +131,20 @@ async def create_session(request: Request):
         return _handle_domain_error(request, error)
 
 
+@router.get("/api/v2/agent-design/sessions")
+async def list_sessions(request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        return JSONResponse(content=jsonable_encoder({
+            "status": "success", "request_id": _request_id(request),
+            "data": [item.model_dump() for item in get_agent_dialogue_service().list_sessions(user_id)],
+        }))
+    except AgentDialogueError as error:
+        return _handle_domain_error(request, error)
+
+
 @router.get("/api/v2/agent-design/sessions/{session_id}")
 async def get_session(session_id: str, request: Request):
     user_id = _authenticated_user_id(request)
@@ -191,7 +205,8 @@ async def assistant_turn(session_id: str, request: Request):
         return _error(request, "RUNTIME_PROVIDER_UNAVAILABLE", "Assistant runtime is not configured.", 503, unavailable=True)
     try:
         run, replayed = await service.run_turn(user_id, session_id, payload.content, payload.client_turn_id)
-        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": {"run": run, "replayed": replayed}}))
+        display = service.repository.get_safe_run_display(session_id, user_id, run["id"])
+        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": {"run": run, "display": display, "replayed": replayed}}))
     except AgentDialogueError as error:
         return _handle_domain_error(request, error)
 
@@ -205,6 +220,6 @@ async def get_assistant_turn(session_id: str, run_id: str, request: Request):
     if service is None:
         return _error(request, "RUNTIME_PROVIDER_UNAVAILABLE", "Assistant runtime is not configured.", 503, unavailable=True)
     try:
-        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": service.repository.get_run(session_id, user_id, run_id)}))
+        return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": service.repository.get_safe_run_display(session_id, user_id, run_id)}))
     except AgentDialogueError as error:
         return _handle_domain_error(request, error)

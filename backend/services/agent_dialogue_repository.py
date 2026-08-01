@@ -114,6 +114,16 @@ class AgentDialogueRepository:
             raise AgentSessionNotFound()
         return row
 
+    def list_sessions(self, user_id: str) -> list[dict[str, Any]]:
+        """Return only this owner's session rows, newest activity first."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT * FROM agent_sessions WHERE user_id=%s ORDER BY updated_at DESC, created_at DESC",
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
     def list_messages(self, session_id: str, user_id: str) -> list[dict[str, Any]]:
         with self._transaction() as cursor:
             self._locked_owned_session(cursor, session_id, user_id)

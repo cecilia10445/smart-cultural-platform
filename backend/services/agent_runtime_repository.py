@@ -117,6 +117,50 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             raise AgentSessionNotFound()
         return row
 
+    def get_safe_run_display(self, session_id: str, user_id: str, run_id: str) -> dict[str, Any]:
+        """Allow-list one persisted Runtime turn for the browser workspace.
+
+        Raw model payloads, tool arguments and observations never leave this
+        boundary; the UI only receives final structured output and completed
+        tool labels plus compact context metadata.
+        """
+        with self._transaction() as cursor:
+            self._locked_owned_session(cursor, session_id, user_id)
+            cursor.execute("SELECT * FROM agent_runtime_runs WHERE id=%s AND session_id=%s AND user_id=%s", (run_id, session_id, user_id))
+            run = self._fetchone(cursor)
+            if run is None:
+                from backend.domain.agent_dialogue import AgentSessionNotFound
+                raise AgentSessionNotFound()
+            cursor.execute("""SELECT event_type,tool_name,success,budget_snapshot_json
+                FROM agent_runtime_events WHERE run_id=%s ORDER BY sequence_number ASC""", (run_id,))
+            events = [dict(row) for row in cursor.fetchall() if isinstance(row, dict)]
+        final = run.get("final_output_json")
+        if isinstance(final, str):
+            try: final = json.loads(final)
+            except ValueError: final = None
+        context_metadata: dict[str, Any] = {}
+        tool_names: list[str] = []
+        for event in events:
+            if event.get("event_type") == "context_built":
+                value = event.get("budget_snapshot_json")
+                if isinstance(value, str):
+                    try: value = json.loads(value)
+                    except ValueError: value = {}
+                if isinstance(value, dict):
+                    context_metadata = {key: value[key] for key in (
+                        "summary_version", "compression_triggered", "compression_reason", "estimated_tokens_before",
+                        "estimated_tokens_after", "messages_summarized", "recent_messages_included", "fallback_used",
+                    ) if key in value}
+            if event.get("event_type") in {"tool_completed", "tool_semantic_replayed"} and event.get("success") is True:
+                name = event.get("tool_name")
+                if isinstance(name, str) and name not in tool_names:
+                    tool_names.append(name)
+        return {
+            "id": run["id"], "status": run.get("status"), "final_output_type": run.get("final_output_type"),
+            "output": final if isinstance(final, dict) else None,
+            "safe_tool_events": tool_names, "context_metadata": context_metadata,
+        }
+
     def complete_run(self, run: dict[str, Any], result, user_content: str, assistant_text: str, assistant_json: dict[str, Any]) -> dict[str, Any]:
         now = self._now()
         with self._transaction() as cursor:
@@ -138,6 +182,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
             n = int((self._fetchone(cursor) or {}).get("n") or 1)
             cursor.execute("INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,client_turn_id,created_at) VALUES (%s,%s,%s,'user','runtime_request',%s,NULL,%s,%s)", (str(uuid.uuid4()),run["session_id"],n,user_content,run["client_turn_id"],now))
             cursor.execute("INSERT INTO agent_messages (id,session_id,sequence_no,role,message_type,content_text,content_json,created_at) VALUES (%s,%s,%s,'assistant','runtime_result',%s,%s,%s)", (str(uuid.uuid4()),run["session_id"],n+1,assistant_text,self._json(assistant_json),now))
+            cursor.execute("UPDATE agent_sessions SET updated_at=%s WHERE id=%s AND user_id=%s", (now, run["session_id"], run["user_id"]))
             for record in result.traces:
                 item = record.model_dump(mode="json")
                 cursor.execute("""INSERT INTO agent_runtime_events (id,run_id,sequence_number,event_type,tool_call_id,tool_name,risk,success,error_code,duration_ms,arguments_hash,input_summary_json,output_summary_json,budget_snapshot_json,created_at)
