@@ -33,11 +33,17 @@ class DesignConversationService:
         # A compatible provider can persistently request an exhausted read-only
         # search even after receiving the limit observation.  End safely with a
         # fully validated question rather than making unbounded model requests.
-        if (result.status is AgentRunStatus.FAILED and result.error and result.error.code == "MODEL_REQUEST_LIMIT_EXCEEDED"
-                and any(record.error_code == "TOOL_CALL_LIMIT_EXCEEDED" for record in result.traces)):
+        invalid_structured_output = (result.status is AgentRunStatus.FAILED and result.error
+                                     and result.error.code == "RUNTIME_MODEL_RESPONSE_INVALID"
+                                     and bool(result.tool_results))
+        if ((result.status is AgentRunStatus.FAILED and result.error and result.error.code == "MODEL_REQUEST_LIMIT_EXCEEDED"
+                and any(record.error_code == "TOOL_CALL_LIMIT_EXCEEDED" for record in result.traces))
+                or invalid_structured_output):
             output = DesignConversationOutput.model_validate({"result": {"kind": "ask_user",
-                "question": "请确认可用的文化资料或补充更具体的来源线索。",
-                "missing_fields": ["cultural_evidence"],
-                "reason_summary": "Approved cultural retrieval could not provide a usable source within the bounded tool budget."}}).model_dump(mode="json")
-            return result.model_copy(update={"status": AgentRunStatus.COMPLETED, "final_output": output, "error": None})
+                "question": "当前信息还不足以形成稳定方案，请补充产品使用场景、风格偏好或希望避免的方向。",
+                "missing_fields": ["product_context"],
+                "reason_summary": "当前资料不足，需要你补充后继续。"}}).model_dump(mode="json")
+            return result.model_copy(update={"status": AgentRunStatus.COMPLETED, "final_output": output, "error": None,
+                                             "context_metadata": {**result.context_metadata,
+                                                                  "final_output_origin": "bounded_invalid_response_fallback" if invalid_structured_output else "bounded_tool_budget_fallback"}})
         return result

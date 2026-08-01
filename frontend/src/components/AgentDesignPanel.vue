@@ -27,6 +27,7 @@
             <article v-for="message in currentMessages" :key="message.id" :class="['message', message.role]">
               <span class="message__speaker">{{ message.role === 'user' ? '你' : '设计助手' }}</span>
               <template v-if="message.structured_output"><OutputCard :output="message.structured_output" @confirm="confirmAction" /></template>
+              <p v-else-if="message.role === 'assistant' && message.message_type === 'runtime_result'">本轮智能协作未能生成有效回复，请重新尝试。</p>
               <p v-else>{{ message.text }}</p><time>{{ formatTime(message.created_at) }}</time>
             </article>
             <div v-if="pendingBySessionId[draftKey]" class="agent-thinking"><span></span>Agent 正在分析当前会话…</div>

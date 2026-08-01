@@ -151,7 +151,7 @@ class AgentRuntimeRepository(AgentDialogueRepository):
                         "summary_version", "compression_triggered", "compression_reason", "estimated_tokens_before",
                         "estimated_tokens_after", "messages_summarized", "recent_messages_included", "fallback_used",
                     ) if key in value}
-            if event.get("event_type") in {"tool_completed", "tool_semantic_replayed"} and event.get("success") is True:
+            if event.get("event_type") in {"tool_completed", "tool_semantic_replayed"} and event.get("success") in (True, 1):
                 name = event.get("tool_name")
                 if isinstance(name, str) and name not in tool_names:
                     tool_names.append(name)
