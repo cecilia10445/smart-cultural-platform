@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+from dataclasses import dataclass
 
 from backend.services.aigc_service import AIGCService, AIGCServiceError
 from backend.services.image_storage import ImagePersistenceError, persist_generated_image
@@ -38,3 +39,24 @@ class AgentImageGenerationService:
             return {"image_url": self.persist(provider_url, self.images_dir), "presentation_mode": mode}
         except (AIGCServiceError, ImagePersistenceError):
             raise
+
+
+@dataclass(frozen=True)
+class ImageGenerationRequest:
+    positive_prompt: str; negative_prompt: str; presentation_mode: str; provider_options: dict[str, Any]
+    snapshot_hash: str
+
+@dataclass(frozen=True)
+class ImageGenerationResult:
+    image_url: str; presentation_mode: str; provider_request_id: str | None = None
+
+class ImageGenerationPort(Protocol):
+    def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult: ...
+
+class AgentImageGenerationPort:
+    """Explicit adapter; the old image service remains untouched for legacy flow."""
+    def __init__(self, service: AgentImageGenerationService): self.service = service
+    def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult:
+        value = self.service.generate({"positive_prompt": request.positive_prompt, "negative_prompt": request.negative_prompt,
+                                       "presentation_mode": request.presentation_mode, **request.provider_options})
+        return ImageGenerationResult(image_url=value["image_url"], presentation_mode=value["presentation_mode"])

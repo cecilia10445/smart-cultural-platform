@@ -193,6 +193,7 @@ class ActionRecord(BaseModel):
     execution_idempotency_key: str | None = None; execution_request_hash: str | None = None
     execution_result_hash: str | None = None; execution_started_at: datetime | None = None
     executor_version: str | None = None
+    external_outcome_status: str | None = None; provider_request_id: str | None = None
 
 
 class LegacyTaskProjection(BaseModel):

@@ -15,8 +15,8 @@ from backend.domain.agent_design_domain import project_legacy_session
 
 
 class AgentActionService:
-    def __init__(self, repository: AgentDesignDomainRepository):
-        self.repository = repository
+    def __init__(self, repository: AgentDesignDomainRepository, image_port=None):
+        self.repository, self.image_port = repository, image_port
 
     @staticmethod
     def _safe_action(action) -> dict[str, Any]:
@@ -121,7 +121,7 @@ class AgentActionService:
         return self._safe_action(saved), replayed
 
     def execute(self, user_id, action_id, *, idempotency_key, expected_action_status, expected_task_version):
-        action, replayed = AgentActionExecutor(self.repository).execute(user_id, action_id, idempotency_key=idempotency_key,
+        action, replayed = AgentActionExecutor(self.repository, image_port=self.image_port).execute(user_id, action_id, idempotency_key=idempotency_key,
             expected_action_status=expected_action_status, expected_task_version=expected_task_version)
         task = self.repository.get_task(action.task_id, user_id, action.session_id)
         return {"action": self._safe_action(action), "created_artifact_ids": (action.result_json or {}).get("created_artifact_ids", []),

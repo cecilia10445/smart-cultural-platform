@@ -256,3 +256,43 @@ class AgentDesignDomainRepository(AgentDialogueRepository):
         now = self._now()
         with self._transaction() as cursor:
             cursor.execute("UPDATE agent_actions SET status='failed',error_code=%s,error_summary=%s,updated_at=%s WHERE id=%s AND user_id=%s AND status='running'", (code,summary[:1000],now,action_id,user_id))
+
+    def claim_image_action(self, user_id, action_id, *, idempotency_key, expected_task_version):
+        now = self._now()
+        with self._transaction() as cursor:
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s FOR UPDATE", (action_id,user_id)); action=self._fetchone(cursor)
+            if action is None: raise ActionNotFound()
+            task=self._locked_task(cursor,action["task_id"],user_id,action["session_id"])
+            if action.get("status") == ActionStatus.COMPLETED.value: return self._action(action), True
+            if action.get("status") == ActionStatus.RUNNING.value:
+                from backend.domain.agent_design_domain import ActionStateConflict
+                raise ActionStateConflict("ACTION_EXECUTION_RECOVERY_REQUIRED")
+            if action.get("status") != ActionStatus.APPROVED.value: raise ActionStateConflict()
+            if expected_task_version is not None and int(task.get("version") or 0) != expected_task_version: raise DesignTaskVersionConflict()
+            request_hash=canonical_json_hash({"expected_task_version":expected_task_version,"action_id":action_id})
+            cursor.execute("UPDATE agent_actions SET status='running',execution_idempotency_key=%s,execution_request_hash=%s,execution_started_at=%s,executor_version='f3',external_outcome_status='claimed',updated_at=%s WHERE id=%s AND status='approved'", (idempotency_key,request_hash,now,now,action_id))
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s",(action_id,)); action=self._fetchone(cursor)
+        return self._action(action), False
+
+    def mark_image_provider_succeeded(self, user_id, action_id, provider_request_id):
+        with self._transaction() as cursor:
+            cursor.execute("UPDATE agent_actions SET external_outcome_status='provider_succeeded',provider_request_id=%s,updated_at=%s WHERE id=%s AND user_id=%s AND status='running'", (provider_request_id,self._now(),action_id,user_id))
+
+    def complete_image_action(self, user_id, action_id, result):
+        now=self._now()
+        with self._transaction() as cursor:
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s AND user_id=%s FOR UPDATE",(action_id,user_id)); action=self._fetchone(cursor)
+            if action is None: raise ActionNotFound()
+            if action.get("status") == ActionStatus.COMPLETED.value: return self._action(action), True
+            if action.get("status") != ActionStatus.RUNNING.value: raise ActionStateConflict()
+            cursor.execute("""INSERT INTO generation_logs (user_id,event_type,timestamp,prompt,style,image_url,title,content,generation_time,content_length,user_rating,download_count,user_age,user_gender,login_time,data_origin,generation_kind,prompt_template_version,brief_json,response_json)
+                VALUES (%s,'generate',%s,%s,'agent-action',%s,'Approved image action','Approved task-scoped image',0,0,NULL,0,NULL,NULL,NULL,'production','agent_action_image','agent-action-f3',NULL,%s)""", (user_id,now,"approved image snapshot",result["image_url"],self._json({"action_id":action_id,"source_type":result["source_type"],"snapshot_hash":result["snapshot_hash"]})))
+            log_id=int(cursor.lastrowid)
+            cursor.execute("SELECT COALESCE(MAX(version_number),0)+1 AS n FROM agent_artifacts WHERE task_id=%s AND artifact_type='generated_image' FOR UPDATE",(action["task_id"],)); version=int((self._fetchone(cursor) or {}).get("n") or 1)
+            artifact_id=str(uuid.uuid4()); content={"image_url":result["image_url"],"presentation_mode":result["presentation_mode"],"generation_kind":result["source_type"],"provider_request_id":result.get("provider_request_id"),"source_type":result["source_type"],"snapshot_hash":result["snapshot_hash"]}
+            cursor.execute("""INSERT INTO agent_artifacts (id,user_id,session_id,task_id,artifact_type,status,version_number,parent_artifact_id,source_runtime_run_id,source_action_id,content_json,content_hash,generation_log_id,origin,created_at,confirmed_at,superseded_at)
+                VALUES (%s,%s,%s,%s,'generated_image','confirmed',%s,%s,%s,%s,%s,%s,%s,'native',%s,%s,NULL)""",(artifact_id,user_id,action["session_id"],action["task_id"],version,result.get("parent_image_artifact_id"),action.get("source_runtime_run_id"),action_id,self._json(content),canonical_json_hash(content),log_id,now,now))
+            outcome={"created_artifact_ids":[artifact_id],"superseded_artifact_ids":[],"generation_log_id":log_id,"task_version":None}
+            cursor.execute("UPDATE agent_actions SET status='completed',generation_log_id=%s,result_json=%s,execution_result_hash=%s,external_outcome_status='completed',completed_at=%s,updated_at=%s WHERE id=%s",(log_id,self._json(outcome),canonical_json_hash(outcome),now,now,action_id))
+            cursor.execute("SELECT * FROM agent_actions WHERE id=%s",(action_id,)); action=self._fetchone(cursor)
+        return self._action(action),False

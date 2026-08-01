@@ -6,13 +6,23 @@ from backend.domain.agent_design_domain import (
     ActionExecutorNotAvailable, ActionProposalContentIncomplete, ActionType,
     ArtifactType, canonical_json_hash,
 )
+from backend.services.agent_image_generation import ImageGenerationRequest
 
 
 IMAGE_ACTIONS = {ActionType.GENERATE_IMAGE_FROM_CONVERSATION, ActionType.GENERATE_IMAGE_FROM_ARTIFACT, ActionType.REGENERATE_IMAGE}
 
 
 class AgentActionExecutor:
-    def __init__(self, repository): self.repository = repository
+    def __init__(self, repository, image_port=None): self.repository, self.image_port = repository, image_port
+
+    def _image_snapshot(self, action):
+        value=action.proposal_snapshot_json or {}
+        required=("source_type","positive_prompt","negative_prompt","presentation_mode","snapshot_hash")
+        if any(not value.get(key) for key in required): raise ActionProposalContentIncomplete()
+        if value["source_type"] not in {"conversation_snapshot","artifact_snapshot","regeneration_snapshot"}: raise ActionProposalContentIncomplete()
+        if canonical_json_hash({key:value.get(key) for key in ("source_type","source_session_id","source_task_id","source_runtime_run_id","source_message_ids","source_artifact_ids","parent_image_artifact_id","confirmed_constraints","tentative_assumptions","positive_prompt","negative_prompt","presentation_mode","provider_options")}) != value["snapshot_hash"]: raise ActionProposalContentIncomplete()
+        if value["source_task_id"] != action.task_id or value["source_session_id"] != action.session_id: raise ActionProposalContentIncomplete()
+        return value
 
     def _command(self, action):
         snapshot = action.proposal_snapshot_json or {}
@@ -42,7 +52,17 @@ class AgentActionExecutor:
         if action.status.value == "completed":
             return action, True
         if action.action_type in IMAGE_ACTIONS:
-            raise ActionExecutorNotAvailable()
+            if self.image_port is None: raise ActionExecutorNotAvailable()
+            snapshot=self._image_snapshot(action)
+            claimed,replayed=self.repository.claim_image_action(user_id,action_id,idempotency_key=idempotency_key,expected_task_version=expected_task_version)
+            if replayed: return claimed,True
+            try:
+                result=self.image_port.generate(ImageGenerationRequest(positive_prompt=snapshot["positive_prompt"],negative_prompt=snapshot["negative_prompt"],presentation_mode=snapshot["presentation_mode"],provider_options=snapshot.get("provider_options") or {},snapshot_hash=snapshot["snapshot_hash"]))
+                self.repository.mark_image_provider_succeeded(user_id,action_id,result.provider_request_id)
+                return self.repository.complete_image_action(user_id,action_id,{"image_url":result.image_url,"presentation_mode":result.presentation_mode,"provider_request_id":result.provider_request_id,"source_type":snapshot["source_type"],"snapshot_hash":snapshot["snapshot_hash"],"parent_image_artifact_id":snapshot.get("parent_image_artifact_id")})
+            except Exception:
+                self.repository.mark_action_failed(user_id,action_id,"IMAGE_PROVIDER_FAILED","Approved image generation did not complete.")
+                raise
         conversation = self.repository.get_conversation(user_id, action.session_id)
         task = self.repository.get_task(action.task_id, user_id, action.session_id)
         artifacts = self.repository.list_artifacts(user_id, action.session_id, task.id)
