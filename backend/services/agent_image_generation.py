@@ -54,9 +54,18 @@ class ImageGenerationPort(Protocol):
     def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult: ...
 
 class AgentImageGenerationPort:
-    """Explicit adapter; the old image service remains untouched for legacy flow."""
+    """One-request adapter for approved Agent image actions.
+
+    The legacy service may compose a layout by making a reference image and a
+    second edit call.  New Action execution is deliberately one approved
+    snapshot -> one provider request, so a three-view instruction belongs in
+    the frozen prompt rather than triggering an implicit second generation.
+    """
     def __init__(self, service: AgentImageGenerationService): self.service = service
     def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult:
-        value = self.service.generate({"positive_prompt": request.positive_prompt, "negative_prompt": request.negative_prompt,
-                                       "presentation_mode": request.presentation_mode, **request.provider_options})
-        return ImageGenerationResult(image_url=value["image_url"], presentation_mode=value["presentation_mode"])
+        try:
+            provider_url = self.service.aigc_service.generate_image_from_prompt(request.positive_prompt, request.negative_prompt)
+            image_url = self.service.persist(provider_url, self.service.images_dir)
+            return ImageGenerationResult(image_url=image_url, presentation_mode=request.presentation_mode)
+        except (AIGCServiceError, ImagePersistenceError):
+            raise

@@ -9,12 +9,12 @@ from .models import (
 )
 from .policy import ToolPolicy
 from .tool_registry import ToolRegistry
-from .providers import RuntimeProviderError, build_runtime_model
+from .providers import RuntimeProviderError, build_runtime_model, build_runtime_model_settings
 
 __all__ = [
     "AgentDefinition", "AgentRunResult", "AgentRunStatus", "PendingApproval", "RuntimeContext",
     "RuntimeBudget", "RuntimeEngine", "RuntimeInput", "RuntimeUsage", "ToolAuthorizationDecision", "ToolCall",
     "ToolCallLedger", "ToolError", "ToolErrorCode", "ToolExecutor", "ToolPolicy", "ToolRegistry",
     "ToolResult", "ToolRisk", "ToolSpec",
-    "RuntimeProviderError", "build_runtime_model",
+    "RuntimeProviderError", "build_runtime_model", "build_runtime_model_settings",
 ]

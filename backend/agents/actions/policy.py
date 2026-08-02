@@ -58,9 +58,7 @@ def evaluate_action(input: ActionPolicyInput) -> ActionPolicyDecision:
     if input.conversation.conversation_status != ConversationStatus.ACTIVE:
         return _deny("CONVERSATION_ARCHIVED", "Restore this conversation before using design actions.")
     task = input.active_task
-    if task is None:
-        return _deny("ACTIVE_TASK_REQUIRED", "Create or select a design task before using this action.")
-    if task.status == DesignTaskStatus.CLOSED:
+    if task is not None and task.status == DesignTaskStatus.CLOSED:
         return _deny("TASK_CLOSED", "This design task is closed.")
     snapshot = input.proposal_snapshot or {}
     if action == ActionType.SAVE_BRIEF and _proposal_kind(snapshot) != "brief":
@@ -86,6 +84,8 @@ def evaluate_action(input: ActionPolicyInput) -> ActionPolicyDecision:
         has_image = any(item.artifact_type == ArtifactType.GENERATED_IMAGE for item in input.artifacts)
         if not has_image and not snapshot.get("generation_log_id"):
             return _deny("IMAGE_SOURCE_REQUIRED", "Choose an earlier generated image before regenerating.", "generated_image")
+    if action == ActionType.ARCHIVE_TASK and task is None:
+        return _deny("ACTIVE_TASK_REQUIRED", "Choose a design task before archiving it.")
     return ActionPolicyDecision(True, "ACTION_ALLOWED", "This action is ready for your explicit confirmation.", available_assumptions=_assumptions(snapshot))
 
 

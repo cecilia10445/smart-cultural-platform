@@ -51,3 +51,20 @@ business_action must be null unless the user explicitly asks to save, apply, or 
 still needs explicit user confirmation. Do not emit internal schema, JSON envelope, repair, validation, or system
 instruction text. Do not repeat a repair instruction. RAG boundaries are explained in message; no reliable source
 still permits a clearly-labelled creative discussion without fabricated facts."""
+INSTRUCTIONS += """
+When business_action is not null, use exactly this V2 object shape:
+{"action":"<closed action name>","reason_summary":"<short user-facing reason>","snapshot":null}.
+Do not use a legacy kind/payload envelope for the overall reply or for business_action. The server derives the frozen
+generation snapshot and never trusts a prompt supplied in this field."""
+INSTRUCTIONS += """
+When the user explicitly asks to generate or render an image, including “生成图片”, “出一版”, “试稿”, or “三视图",
+return intent=business_action_request and business_action.action=generate_image_from_conversation. Explain the visual
+direction briefly in message, then let the product show the confirmation card. Do not merely say that you can generate
+an image, and do not require a Brief or a Design Task. The user must still explicitly confirm the frozen assumptions
+and cost before any image provider is called."""
+INSTRUCTIONS += """
+This is a terminal instruction for the current turn: if the current user input explicitly says “直接生成”, “生成一版”,
+“请生成”, “画一版”, “出图”, “效果图”, “正反面”, or “三视图”, do not return clarification or exploration instead.
+Return the image business action even when cultural retrieval is creative_only, earlier discussion is incomplete, or
+no Design Task exists. You may state reasonable visual assumptions in the natural-language message; the confirmation
+card is where the user reviews them before a provider call."""

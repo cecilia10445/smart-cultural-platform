@@ -229,6 +229,33 @@ def test_agent_history_uses_a_dedicated_allowlisted_record_type(monkeypatch):
 
     assert result["record_type"] == "agent_dialogue_generation"
     assert result["agent_session_id"] == "session-73"
-    assert result["detail_url"] == "/index.html?agent_session_id=session-73"
+    assert result["history_detail_url"] == "/api/v2/agent-design/history/generation-logs/73"
     assert result["visual_direction"] == {"product_form": "环形结构"}
     assert "secret" not in result and "provider_payload" not in result["visual_direction"]
+
+
+def test_f3_agent_image_and_unknown_generation_have_explicit_history_projections(monkeypatch):
+    service = MySQLService()
+    rows = [
+        {"log_id": 91, "generation_kind": "agent_action_image", "timestamp": datetime(2026, 8, 2, 10, 0),
+         "prompt": "", "style": "agent-action", "image_url": "/static/images/f3.png", "title": "图片 V2", "content": "",
+         "generation_time": 0, "content_length": 0, "user_rating": None, "download_count": 0, "user_age": None, "user_gender": None,
+         "brief_json": None, "response_json": '{"positive_prompt":"must-not-leak"}', "data_origin": "production"},
+        {"log_id": 92, "generation_kind": "new_provider_kind", "timestamp": datetime(2026, 8, 2, 11, 0),
+         "prompt": "", "style": "unknown", "image_url": "", "title": "未知", "content": "must-not-leak",
+         "generation_time": 0, "content_length": 0, "user_rating": None, "download_count": 0, "user_age": None, "user_gender": None,
+         "brief_json": None, "response_json": '{"secret":"must-not-leak"}', "data_origin": "production"},
+    ]
+    monkeypatch.setattr(service, "execute_query", lambda *_args: rows)
+
+    agent, unknown = service.get_user_history("U1001")
+
+    assert agent == {
+        "record_type": "agent_artifact_image", "log_id": 91, "product_name": "图片 V2",
+        "image_url": "/static/images/f3.png", "timestamp": "2026-08-02T10:00:00",
+        "generation_kind": "agent_action_image",
+        "history_detail_url": "/api/v2/agent-design/history/generation-logs/91",
+    }
+    assert unknown["record_type"] == "unknown_generation"
+    assert unknown["generation_kind"] == "new_provider_kind"
+    assert "secret" not in unknown and "content" not in unknown

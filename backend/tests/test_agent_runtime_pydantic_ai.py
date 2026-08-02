@@ -1,13 +1,16 @@
 import asyncio
 
+import httpx
 from pydantic import BaseModel
-from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 from backend.agents.runtime import (
-    AgentDefinition, RuntimeContext, RuntimeInput, ToolExecutor, ToolRegistry, ToolRisk, ToolSpec,
+    AgentDefinition, AgentRunStatus, RuntimeContext, RuntimeInput, RuntimeUsage, ToolExecutor, ToolRegistry, ToolRisk, ToolSpec,
 )
 from backend.agents.runtime.adapters import PydanticAIRuntimeEngine
+from backend.agents.runtime.trace import TraceRecorder
 
 
 class ValueInput(BaseModel):
@@ -87,3 +90,74 @@ def test_function_model_final_and_high_risk_pause_are_projected_without_internal
     assert result.status == "pending_approval"
     assert result.pending_approval.tool_call_id == "approval-call"
     assert result.usage.executed_tool_calls == 0
+
+
+def test_model_transport_failure_is_classified_without_persisting_provider_text():
+    error = httpx.ReadTimeout("provider body must not escape", request=httpx.Request("POST", "https://provider.invalid"))
+    code = PydanticAIRuntimeEngine._classify_runtime_exception(error)
+    summary = PydanticAIRuntimeEngine._safe_runtime_failure_summary(error, code)
+    result = PydanticAIRuntimeEngine._failed("run-1", RuntimeUsage(), TraceRecorder("run-1"), [], code, "run_failed")
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error.code == "RUNTIME_MODEL_TIMEOUT"
+    assert result.error.message == "The assistant request timed out."
+    assert summary == {
+        "phase": "model_run",
+        "failure_family": "RUNTIME_MODEL_TIMEOUT",
+        "exception_type": "ReadTimeout",
+    }
+    assert "provider body" not in str({"result": result.model_dump(), "summary": summary})
+
+
+def test_runtime_failure_codes_distinguish_transport_provider_and_adapter_boundaries():
+    assert PydanticAIRuntimeEngine._classify_runtime_exception(httpx.ConnectError("hidden")) == "RUNTIME_PROVIDER_UNAVAILABLE"
+    wrapped_timeout = ModelAPIError("qwen-plus", "hidden")
+    wrapped_timeout.__cause__ = httpx.ReadTimeout("hidden", request=httpx.Request("POST", "https://provider.invalid"))
+    assert PydanticAIRuntimeEngine._classify_runtime_exception(wrapped_timeout) == "RUNTIME_MODEL_TIMEOUT"
+    assert PydanticAIRuntimeEngine._classify_runtime_exception(ValueError("hidden")) == "RUNTIME_EXECUTION_FAILED"
+
+
+def test_repair_prompt_carries_only_the_previous_user_visible_reply():
+    prompt = PydanticAIRuntimeEngine._repair_prompt(None, {
+        "contract_version": "conversation_reply_v2", "message": "为竹编收纳筐生成三视图试稿。",
+        "intent": "business_action_request", "suggestions": [], "rag_status": None,
+        "artifact": None, "business_action": "generate_image_from_conversation",
+        "provider_raw_response": "must not be included",
+    }, ValueError("business_action"))
+    assert "为竹编收纳筐生成三视图试稿。" in prompt
+    assert "generate_image_from_conversation" in prompt
+    assert "must not be included" not in prompt
+
+
+def test_missing_structured_final_output_uses_one_no_tool_json_text_retry():
+    calls = []
+
+    async def model(_messages, info):
+        calls.append([tool.name for tool in info.function_tools])
+        if info.function_tools:
+            # Compatible providers can acknowledge a read-only Function Calling
+            # loop yet omit the structured output-tool payload.
+            return ModelResponse(parts=[])
+        return ModelResponse(parts=[TextPart('{"answer":"recovered"}')])
+
+    engine, definition = runtime(FunctionModel(model))
+    result = run(engine, definition)
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert result.final_output == {"answer": "recovered"}
+    assert calls[-1] == []
+    assert all(call == ["add_one", "multiply_two"] for call in calls[:-1])
+    assert any(item.event_type == "output_retry_requested" for item in result.traces)
+
+
+def test_explicit_image_request_guard_only_requests_a_model_correction():
+    assert PydanticAIRuntimeEngine._requires_image_action("请根据刚才讨论直接生成一版三视图效果图")
+    assert PydanticAIRuntimeEngine._requires_image_action("请画一版正反面")
+    assert not PydanticAIRuntimeEngine._requires_image_action("图片完成后我还想继续讨论材质")
+    assert not PydanticAIRuntimeEngine._is_conversation_image_action({
+        "intent": "clarification", "business_action": None,
+    })
+    assert PydanticAIRuntimeEngine._is_conversation_image_action({
+        "intent": "business_action_request",
+        "business_action": {"action": "generate_image_from_conversation"},
+    })

@@ -225,15 +225,18 @@
               </div>
               <div v-else class="text-skill-mark" aria-hidden="true">文<br>本</div>
               <div>
-                <p class="record-style">{{ isTextSkillRecord(record) ? '文本 Skill 生成' : (isAgentRecord(record) ? '协作式设计' : (isV2Record(record) ? presentationModeLabel(record.presentation_mode) : (record.style || '历史记录'))) }}</p>
+                <p class="record-style">{{ historyRecordLabel(record) }}</p>
                 <h2>{{ isTextSkillRecord(record) ? previewText(record.product_copy_summary, 58) : ((isV2Record(record) || isAgentRecord(record)) ? (record.product_name || '未命名产品') : (record.title || record.prompt || '未命名记录')) }}</h2>
                 <template v-if="isTextSkillRecord(record)">
                   <p>{{ previewText(record.image_design_spec_summary, 110) }}</p>
                   <p class="text-skill-meta">Skill：{{ record.selected_skill_id }} · RAG 来源 {{ record.source_ids?.length || 0 }} 条</p>
                 </template>
                 <template v-else-if="isAgentRecord(record)">
-                  <p>{{ previewText(record.product_design_summary, 110) || '协作式产品设计已完成。' }}</p>
-                  <p class="text-skill-meta">文本 Skill：{{ record.selected_text_skill || '—' }} · 视觉 Skill：{{ record.selected_visual_skill || '—' }}</p>
+                  <p>{{ previewText(record.product_design_summary, 110) || (isAgentArtifactImage(record) ? '这是一张已保存到当前设计档案的图片版本。' : '协作式产品设计已完成。') }}</p>
+                  <p v-if="!isAgentArtifactImage(record)" class="text-skill-meta">文本 Skill：{{ record.selected_text_skill || '—' }} · 视觉 Skill：{{ record.selected_visual_skill || '—' }}</p>
+                </template>
+                <template v-else-if="isUnknownGeneration(record)">
+                  <p>该记录保留了生成时间与编号，但类型暂时无法映射到快速生成或协作式设计详情。</p>
                 </template>
                 <template v-else-if="isV2Record(record)">
                   <ul v-if="Array.isArray(record.selling_points) && record.selling_points.length" class="history-selling-points"><li v-for="point in record.selling_points.slice(0, 3)" :key="point">{{ point }}</li></ul>
@@ -241,8 +244,8 @@
                 </template>
                 <p v-else>{{ previewText(record.content || record.prompt, 110) }}</p>
                 <time>{{ formatDate(record.timestamp || record.generation_time) }}</time>
-                <p v-if="isAgentRecord(record)" class="text-skill-meta">记录编号：{{ record.log_id || '—' }}</p>
-                <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : (isAgentRecord(record) ? openAgentSession(record) : openDetail(record))">查看详情</button>
+                <p v-if="isAgentRecord(record) || isUnknownGeneration(record)" class="text-skill-meta">记录编号：{{ record.log_id || '—' }}</p>
+                <button type="button" class="secondary-button" :disabled="isTextSkillRecord(record) && record.artifact_integrity !== 'verified'" @click="isTextSkillRecord(record) ? openTextSkillDetail(record) : (isAgentRecord(record) ? openAgentHistoryDetail(record) : (isUnknownGeneration(record) ? openUnknownGenerationDetail(record) : openDetail(record)))">查看详情</button>
               </div>
             </article>
           </div>
@@ -298,6 +301,7 @@
     </div>
     <ProductDetailDialog :open="detailOpen" :detail="selectedDetail || {}" @close="detailOpen = false" />
     <TextSkillGenerationDialog :open="textSkillDetailOpen" :detail="selectedTextSkillDetail || {}" @close="textSkillDetailOpen = false" />
+    <AgentGenerationHistoryDialog :open="agentHistoryDetailOpen" :detail="selectedAgentHistoryDetail || {}" @close="agentHistoryDetailOpen = false" @continue-design="continueAgentDesign" />
   </main>
 </template>
 
@@ -305,7 +309,9 @@
 import axios from 'axios'
 import ProductDetailDialog from './components/ProductDetailDialog.vue'
 import TextSkillGenerationDialog from './components/TextSkillGenerationDialog.vue'
+import AgentGenerationHistoryDialog from './components/AgentGenerationHistoryDialog.vue'
 import AgentDesignPanel from './components/AgentDesignPanel.vue'
+import { getAgentGenerationHistory } from './services/agentDialogueApi'
 import { createClientId } from './utils/clientId'
 import {
   buildStylePrompt,
@@ -319,7 +325,7 @@ const DEFAULT_DIRECTION = VISUAL_DIRECTIONS.find((direction) => direction.id ===
 
 export default {
   name: 'App',
-  components: { ProductDetailDialog, TextSkillGenerationDialog, AgentDesignPanel },
+  components: { ProductDetailDialog, TextSkillGenerationDialog, AgentGenerationHistoryDialog, AgentDesignPanel },
   data() {
     return {
       activeTab: 'generate',
@@ -350,6 +356,8 @@ export default {
       selectedDetail: null,
       textSkillDetailOpen: false,
       selectedTextSkillDetail: null,
+      agentHistoryDetailOpen: false,
+      selectedAgentHistoryDetail: null,
       resultStyle: '',
       userInfo: null,
       imageFailed: false,
@@ -417,7 +425,7 @@ export default {
     setGenerationMode(mode) {
       const url = new URL(window.location.href)
       url.searchParams.set('creation_mode', mode)
-      if (mode === 'fast') url.searchParams.delete('agent_session_id')
+      if (mode === 'fast') { url.searchParams.delete('agent_session_id'); url.searchParams.delete('agent_task_id') }
       window.history.pushState({}, '', url)
       this.activeTab = 'generate'
       this.generationMode = mode
@@ -429,6 +437,7 @@ export default {
       }
       const url = new URL(window.location.href)
       url.searchParams.delete('agent_session_id')
+      url.searchParams.delete('agent_task_id')
       url.searchParams.delete('view')
       url.searchParams.set('creation_mode', 'agent')
       window.history.replaceState({}, '', url)
@@ -699,18 +708,39 @@ export default {
       }
     },
     isTextSkillRecord(record) { return record?.record_type === 'text_skill_generation' },
-    isAgentRecord(record) { return record?.record_type === 'agent_dialogue_generation' },
-    openAgentSession(record) {
-      if (!record?.agent_session_id) {
-        this.historyError = '该协作式设计记录暂时无法打开。'
-        return
+    isAgentArtifactImage(record) { return record?.record_type === 'agent_artifact_image' },
+    isAgentRecord(record) { return record?.record_type === 'agent_dialogue_generation' || this.isAgentArtifactImage(record) },
+    isUnknownGeneration(record) { return record?.record_type === 'unknown_generation' },
+    historyRecordLabel(record) {
+      if (this.isTextSkillRecord(record)) return '文本 Skill 生成'
+      if (record?.record_type === 'agent_dialogue_generation') return '历史协作式设计'
+      if (this.isAgentArtifactImage(record)) return '协作式设计 · 图片版本'
+      if (this.isUnknownGeneration(record)) return '未识别生成类型'
+      return this.isV2Record(record) ? this.presentationModeLabel(record.presentation_mode) : (record.style || '快速生成')
+    },
+    async openAgentHistoryDetail(record) {
+      if (!record?.log_id) { this.historyError = '该协作式设计记录暂时无法打开。'; return }
+      try {
+        this.selectedAgentHistoryDetail = await getAgentGenerationHistory(record.log_id)
+        this.agentHistoryDetailOpen = true
+      } catch (error) {
+        this.historyError = this.requestError(error, '协作式设计历史详情')
       }
+    },
+    openUnknownGenerationDetail(record) {
+      this.selectedAgentHistoryDetail = { kind: 'unknown_generation', log_id: record?.log_id, generation_kind: record?.generation_kind, title: record?.title, timestamp: record?.timestamp }
+      this.agentHistoryDetailOpen = true
+    },
+    continueAgentDesign(target) {
+      if (!target?.session_id) { this.historyError = '该协作式设计记录没有可继续的会话。'; return }
       const url = new URL(window.location.href)
-      url.searchParams.set('agent_session_id', record.agent_session_id)
-      url.searchParams.set('view', 'history')
+      url.searchParams.set('agent_session_id', target.session_id)
+      if (target.task_id) url.searchParams.set('agent_task_id', target.task_id)
+      else url.searchParams.delete('agent_task_id')
       url.searchParams.set('creation_mode', 'agent')
       url.searchParams.delete('tab')
       window.history.pushState({}, '', url)
+      this.agentHistoryDetailOpen = false
       this.generationMode = 'agent'
       this.activeTab = 'generate'
       this.agentPanelKey += 1

@@ -63,7 +63,7 @@ class AgentDialogueError(RuntimeError):
     retryable = False
 
     def __init__(self, message: str | None = None):
-        self.message = message or self.code
+        self.message = message or getattr(type(self), "message", None) or self.code
         super().__init__(self.message)
 
 
@@ -279,7 +279,11 @@ class AgentMessageResponse(BaseModel):
     text: str
     created_at: str
     client_turn_id: str | None = None
+    # Runtime results retain their producing Run ID so the UI can never attach
+    # an Action confirmation card from an earlier reply to a later failed run.
+    runtime_run_id: str | None = None
     structured_output: dict[str, Any] | None = None
+    runtime_failure: dict[str, Any] | None = None
 
 
 class AgentStepErrorResponse(BaseModel):
@@ -630,6 +634,19 @@ def project_agent_session_detail(
     step_rows: list[Mapping[str, Any]] | None = None,
 ) -> AgentSessionDetailResponse:
     """Allow-list database rows into the stable public response model."""
+    def runtime_failure(row: Mapping[str, Any]) -> dict[str, Any] | None:
+        if row.get("message_type") != "runtime_result":
+            return None
+        value = _json_object(_json_object(row.get("content_json")).get("runtime_failure"))
+        code = _text(value.get("code"))
+        if code not in {
+            "MODEL_REQUEST_LIMIT_EXCEEDED", "RUNTIME_OUTPUT_REPAIR_INVALID", "RUNTIME_MODEL_TIMEOUT",
+            "RUNTIME_PROVIDER_UNAVAILABLE", "RUNTIME_PROVIDER_AUTH_FAILED", "RUNTIME_PROVIDER_RATE_LIMITED",
+            "RUNTIME_PROVIDER_REQUEST_REJECTED", "RUNTIME_ADAPTER_CONFIGURATION_ERROR", "RUNTIME_EXECUTION_FAILED",
+        }:
+            return None
+        return {"code": code, "retryable": value.get("retryable") is True}
+
     messages = [
         AgentMessageResponse(
             id=str(row.get("id", "")), sequence_no=max(int(row.get("sequence_no") or 1), 1),
@@ -637,8 +654,10 @@ def project_agent_session_detail(
             message_type=_text(row.get("message_type")) or "system", text=_text(row.get("content_text")) or "",
             created_at=_iso(row.get("created_at")),
             client_turn_id=_text(row.get("client_turn_id")),
+            runtime_run_id=_text(_json_object(row.get("content_json")).get("runtime_run_id")),
             structured_output=(_runtime_conversation_projection(_json_object(row.get("content_json")).get("output"))
                                if row.get("message_type") == "runtime_result" else None),
+            runtime_failure=runtime_failure(row),
         )
         for row in (message_rows or [])
     ]

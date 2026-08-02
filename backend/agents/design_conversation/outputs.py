@@ -215,6 +215,31 @@ class ProviderBusinessActionV2(BaseModel):
     reason_summary: str = Field(min_length=1, max_length=1000)
     snapshot: dict[str, Any] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_compatible_action_payload(cls, value: Any) -> Any:
+        """Accept the provider's established ``action/payload`` envelope.
+
+        Some OpenAI-compatible Function Calling models return the closed
+        action name plus a ``payload`` object instead of the V2
+        ``reason_summary``/``snapshot`` pair.  The action remains closed by
+        this model; the server still derives and validates the executable
+        snapshot, so this is an output-adapter compatibility step rather than
+        a client-controlled command path.
+        """
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        payload = normalized.pop("payload", None)
+        if "reason_summary" not in normalized:
+            summary = payload.get("reason_summary") if isinstance(payload, dict) else None
+            normalized["reason_summary"] = summary if isinstance(summary, str) and summary.strip() else (
+                "已准备这项操作；执行前会展示可确认的内容。"
+            )
+        if "snapshot" not in normalized and isinstance(payload, dict):
+            normalized["snapshot"] = payload
+        return normalized
+
 
 class ProviderConversationReplyV2(BaseModel):
     """The only provider-facing contract for new Conversation Output V2 turns.
@@ -231,7 +256,11 @@ class ProviderConversationReplyV2(BaseModel):
     suggestions: list[ConversationSuggestion] = Field(default_factory=list, max_length=4)
     rag_status: RagStatus | None = None
     artifact: ProviderArtifactV2 | None = None
-    business_action: ProviderBusinessActionV2 | None = None
+    # Some OpenAI-compatible function-calling providers serialise a scalar
+    # enum as the tool argument.  Accept only the closed domain enum here,
+    # then adapt it to the normal reviewable action envelope below.  Arbitrary
+    # strings remain invalid and can never become a side effect.
+    business_action: ProviderBusinessActionV2 | ActionType | None = None
 
 
 def adapt_provider_reply_v2(value: ProviderConversationReplyV2 | dict[str, Any]) -> dict[str, Any]:
@@ -250,10 +279,17 @@ def adapt_provider_reply_v2(value: ProviderConversationReplyV2 | dict[str, Any])
             "preserved_constraints": provider_artifact.get("preserved_constraints", []),
             "saved": False, "valid": True,
         }
+    business_action = raw.get("business_action")
+    if isinstance(business_action, str):
+        business_action = {
+            "action": business_action,
+            "reason_summary": "已准备这项操作；执行前会展示可确认的内容。",
+            "snapshot": {"source_type": "runtime_action_hint"},
+        }
     return {
-        "message": raw["message"], "intent": raw["intent"], "suggestions": raw.get("suggestions") or [],
+        "message": raw["message"], "intent": "business_action_request" if business_action else raw["intent"], "suggestions": raw.get("suggestions") or [],
         "rag_status": raw.get("rag_status"), "artifact_proposal": artifact,
-        "business_action": raw.get("business_action"), "output_origin": "provider",
+        "business_action": business_action, "output_origin": "provider",
     }
 
 

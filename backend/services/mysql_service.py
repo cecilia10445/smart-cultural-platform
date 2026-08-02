@@ -483,6 +483,20 @@ class MySQLService:
 
                     response_obj = _json_object(item.get('response_json'))
                     brief_obj = _json_object(item.get('brief_json'))
+                    if item.get('generation_kind') == 'agent_action_image':
+                        # F3 images are owned by the Task/Artifact/Action graph.
+                        # Their read-only detail is resolved by the dedicated
+                        # owner-scoped Agent endpoint, never ProductDetailDialog.
+                        processed_history.append({
+                            'record_type': 'agent_artifact_image',
+                            'log_id': log_id,
+                            'product_name': item.get('title') or '协作式设计图片',
+                            'image_url': str(item.get('image_url') or ''),
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                            'generation_kind': 'agent_action_image',
+                            'history_detail_url': f'/api/v2/agent-design/history/generation-logs/{log_id}',
+                        })
+                        continue
                     if item.get('generation_kind') == 'agent_dialogue_mvp':
                         # Agent sessions have a deliberately separate response contract.
                         # Do not let them fall through to the legacy image DTO, whose
@@ -513,7 +527,7 @@ class MySQLService:
                             'selected_visual_skill': response_obj.get('selected_visual_skill') if isinstance(response_obj.get('selected_visual_skill'), str) else None,
                             'product_design_summary': response_obj.get('product_design_summary') if isinstance(response_obj.get('product_design_summary'), str) else '',
                             'visual_direction': {key: value for key, value in visual_direction.items() if key in {'product_form', 'materials', 'color_plan', 'composition', 'scene', 'presentation_mode'} and isinstance(value, str)},
-                            'detail_url': f'/index.html?agent_session_id={session_id}',
+                            'history_detail_url': f'/api/v2/agent-design/history/generation-logs/{log_id}',
                         })
                         continue
                     if item.get('generation_kind') == 'round17c_text_skill':
@@ -570,6 +584,7 @@ class MySQLService:
                             response_obj.get('factual_background')
                         )
                         processed_item = {
+                            'record_type': 'fast_generation',
                             'log_id': log_id,
                             'generation_kind': item.get('generation_kind'),
                             'prompt_template_version': item.get('prompt_template_version'),
@@ -590,7 +605,23 @@ class MySQLService:
                         processed_history.append(processed_item)
                         continue
 
+                    known_fast_kinds = {None, '', 'cultural_product', 'legacy_cultural_product'}
+                    if item.get('generation_kind') not in known_fast_kinds:
+                        # Unknown rows remain visible and traceable, but must not
+                        # be forced through either the product-detail or Agent
+                        # archive projections.
+                        processed_history.append({
+                            'record_type': 'unknown_generation',
+                            'log_id': log_id,
+                            'generation_kind': str(item.get('generation_kind') or 'unknown'),
+                            'title': str(item.get('title') or '未识别生成记录'),
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                            'image_url': str(item.get('image_url') or ''),
+                        })
+                        continue
+
                     processed_item = {
+                        'record_type': 'fast_generation',
                         'log_id': log_id,
                         'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
                         'prompt': str(item['prompt']) if item['prompt'] else '',

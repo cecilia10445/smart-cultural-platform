@@ -64,8 +64,8 @@ class AgentActionExecutor:
                 self.repository.mark_action_failed(user_id,action_id,"IMAGE_PROVIDER_FAILED","Approved image generation did not complete.")
                 raise
         conversation = self.repository.get_conversation(user_id, action.session_id)
-        task = self.repository.get_task(action.task_id, user_id, action.session_id)
-        artifacts = self.repository.list_artifacts(user_id, action.session_id, task.id)
+        task = self.repository.get_task(action.task_id, user_id, action.session_id) if action.task_id else None
+        artifacts = self.repository.list_artifacts(user_id, action.session_id, action.task_id)
         decision = evaluate_action(ActionPolicyInput(user_id=user_id, conversation=conversation, active_task=task,
             artifacts=tuple(artifacts), requested_action_type=action.action_type, proposal_snapshot=action.proposal_snapshot_json))
         if not decision.allowed:

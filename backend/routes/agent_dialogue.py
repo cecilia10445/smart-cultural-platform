@@ -83,7 +83,14 @@ def get_agent_dialogue_service() -> AgentDialogueService:
 
 def get_agent_action_service() -> AgentActionService:
     from backend.routes import api
-    return AgentActionService(AgentDesignDomainRepository(api.mysql_service))
+    # The port is only reached after a server-validated proposal and explicit
+    # request/approval/execute sequence.  Legacy image routes keep their own
+    # service and state machine.
+    from backend.services.agent_image_generation import AgentImageGenerationPort, AgentImageGenerationService
+    return AgentActionService(
+        AgentDesignDomainRepository(api.mysql_service),
+        image_port=AgentImageGenerationPort(AgentImageGenerationService()),
+    )
 
 
 def get_agent_runtime_turn_service():
@@ -91,12 +98,13 @@ def get_agent_runtime_turn_service():
     from backend.agents.design_conversation import DesignConversationService, build_design_tool_registry
     from backend.agents.runtime import ToolExecutor
     from backend.agents.runtime.adapters import PydanticAIRuntimeEngine
-    from backend.agents.runtime.providers import RuntimeProviderError, build_runtime_model
+    from backend.agents.runtime.providers import RuntimeProviderError, build_runtime_model, build_runtime_model_settings
     from backend.services.agent_runtime_repository import AgentRuntimeRepository
     from backend.services.agent_runtime_turn_service import AgentRuntimeTurnService
     from backend.routes import api
     try:
         model = build_runtime_model()
+        model_settings = build_runtime_model_settings()
     except RuntimeProviderError:
         return None
     repository = AgentRuntimeRepository(api.mysql_service)
@@ -104,7 +112,8 @@ def get_agent_runtime_turn_service():
         return repository.get_session(session_id, user_id)
     return AgentRuntimeTurnService(
         repository,
-        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model), state_reader,
+        DesignConversationService(PydanticAIRuntimeEngine(ToolExecutor(build_design_tool_registry()), model,
+                                                          model_settings=model_settings), state_reader,
                                   cultural_rag=api.get_cultural_rag_service()),
     )
 
@@ -250,6 +259,18 @@ async def get_runtime_action_proposal(session_id: str, run_id: str, action_type:
         return _handle_domain_error(request, error)
 
 
+@router.get("/api/v2/agent-design/history/generation-logs/{generation_log_id}")
+async def get_agent_generation_history(generation_log_id: int, request: Request):
+    """Read-only history detail for Agent-owned image generations only."""
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        return _action_success(request, get_agent_action_service().generation_history_detail(user_id, generation_log_id))
+    except AgentDialogueError as error:
+        return _handle_domain_error(request, error)
+
+
 def _action_success(request: Request, detail, *, replayed: bool = False):
     return JSONResponse(content=jsonable_encoder({"status": "success", "request_id": _request_id(request), "data": detail, "replayed": replayed}))
 
@@ -323,6 +344,21 @@ async def request_design_action(session_id: str, task_id: str, request: Request)
     except AgentDialogueError as error: return _handle_domain_error(request, error)
 
 
+@router.post("/api/v2/agent-design/sessions/{session_id}/actions")
+async def request_conversation_action(session_id: str, request: Request):
+    """Request an approved side effect without silently creating a Task."""
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    payload = await _payload(request, CreateActionRequest)
+    if payload is None: return _error(request, "INVALID_AGENT_REQUEST", "Request body is invalid.", 400)
+    try:
+        detail, replayed = get_agent_action_service().request_action(user_id, session_id, None, action_type=payload.action_type,
+            idempotency_key=payload.idempotency_key, source_runtime_run_id=payload.source_runtime_run_id,
+            source_proposal_digest=payload.source_proposal_digest, expected_task_version=payload.expected_task_version)
+        return _action_success(request, detail, replayed=replayed)
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
 @router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/actions")
 async def list_design_actions(session_id: str, task_id: str, request: Request):
     user_id = _authenticated_user_id(request)
@@ -333,6 +369,16 @@ async def list_design_actions(session_id: str, task_id: str, request: Request):
     except AgentDialogueError as error: return _handle_domain_error(request, error)
 
 
+@router.get("/api/v2/agent-design/sessions/{session_id}/actions")
+async def list_conversation_actions(session_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        service = get_agent_action_service()
+        return _action_success(request, [service._safe_action(item) for item in service.repository.list_actions(user_id, session_id, None)])
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
 @router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/actions/{action_id}")
 async def get_design_action(session_id: str, task_id: str, action_id: str, request: Request):
     user_id = _authenticated_user_id(request)
@@ -340,6 +386,16 @@ async def get_design_action(session_id: str, task_id: str, action_id: str, reque
     try:
         service = get_agent_action_service()
         return _action_success(request, service._safe_action(service.repository.get_action(action_id, user_id, session_id, task_id)))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/actions/{action_id}")
+async def get_conversation_action(session_id: str, action_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        service = get_agent_action_service()
+        return _action_success(request, service._safe_action(service.repository.get_action(action_id, user_id, session_id, None)))
     except AgentDialogueError as error: return _handle_domain_error(request, error)
 
 
@@ -390,6 +446,17 @@ async def list_design_artifacts(session_id: str, task_id: str, request: Request,
     except AgentDialogueError as error: return _handle_domain_error(request, error)
 
 
+@router.get("/api/v2/agent-design/sessions/{session_id}/artifacts")
+async def list_conversation_artifacts(session_id: str, request: Request, artifact_type: str | None = None,
+                                      status: str | None = None):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        return _action_success(request, get_agent_action_service().artifacts(user_id, session_id, None,
+            artifact_type=artifact_type, status=status, include_legacy=False))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
 @router.get("/api/v2/agent-design/sessions/{session_id}/tasks/{task_id}/artifacts/{artifact_id}")
 async def get_design_artifact(session_id: str, task_id: str, artifact_id: str, request: Request):
     user_id = _authenticated_user_id(request)
@@ -397,4 +464,15 @@ async def get_design_artifact(session_id: str, task_id: str, artifact_id: str, r
     try:
         item = get_agent_action_service().repository.get_artifact(artifact_id, user_id, session_id, task_id)
         return _action_success(request, get_agent_action_service()._safe_artifact(item))
+    except AgentDialogueError as error: return _handle_domain_error(request, error)
+
+
+@router.get("/api/v2/agent-design/sessions/{session_id}/artifacts/{artifact_id}")
+async def get_conversation_artifact(session_id: str, artifact_id: str, request: Request):
+    user_id = _authenticated_user_id(request)
+    if not user_id: return _error(request, "AUTH_REQUIRED", "Please sign in before using agent design.", 401)
+    try:
+        service = get_agent_action_service()
+        item = service.repository.get_artifact(artifact_id, user_id, session_id, None)
+        return _action_success(request, service._safe_artifact(item))
     except AgentDialogueError as error: return _handle_domain_error(request, error)

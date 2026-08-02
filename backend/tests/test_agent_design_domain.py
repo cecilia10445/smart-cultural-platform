@@ -8,6 +8,7 @@ from backend.domain.agent_design_domain import (
     canonical_json_hash, project_legacy_session,
 )
 from backend.domain.agent_dialogue import AgentSessionStatus
+from backend.services.agent_design_domain_repository import AgentDesignDomainRepository
 
 
 def test_new_domain_enums_are_independent_from_legacy_session_status():
@@ -52,3 +53,15 @@ def test_legacy_projection_is_stable_read_only_and_does_not_invent_absent_data()
 def test_legacy_projection_keeps_terminal_legacy_sessions_read_only(status):
     projection = project_legacy_session({"id": f"s-{status}", "user_id": "U1", "status": status})
     assert projection.task.status is DesignTaskStatus.CLOSED
+
+
+def test_conversation_projection_ignores_legacy_session_workflow_columns():
+    now = datetime(2026, 8, 3)
+    conversation = AgentDesignDomainRepository._conversation_projection({
+        "id": "session-1", "user_id": "U1", "conversation_status": "active", "active_task_id": None,
+        "archived_at": None, "version": 1, "created_at": now, "updated_at": now,
+        "status": "created", "current_stage": "created", "brief_json": None, "confirmed_text_json": None,
+        "image_prompt_json": None, "generation_log_id": None, "error_json": None,
+    })
+    assert conversation.conversation_status is ConversationStatus.ACTIVE
+    assert conversation.legacy_session_status == "created"

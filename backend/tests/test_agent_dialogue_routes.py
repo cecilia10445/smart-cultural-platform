@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from backend.domain.agent_dialogue import (
     AgentDecisionNotSupported, AgentSessionDetailResponse, AgentSessionNotFound,
-    AgentSessionStateConflict, AgentSessionStatus, project_agent_session_detail,
+    AgentPersistenceUnavailable, AgentSessionStateConflict, AgentSessionStatus, project_agent_session_detail,
 )
 
 
@@ -82,7 +82,7 @@ def test_persisted_legacy_runtime_output_projects_to_a_natural_reply():
         {"id": "s1", "status": "created", "current_stage": "created"},
         [{"id": "m1", "sequence_no": 1, "role": "assistant", "message_type": "runtime_result",
           "content_text": "旧版摘要", "created_at": datetime(2026, 8, 1),
-          "content_json": json.dumps({"output": {"result": {"kind": "propose_brief", "brief": {"product_type": "杯垫"},
+          "content_json": json.dumps({"runtime_run_id": "run-legacy-1", "output": {"result": {"kind": "propose_brief", "brief": {"product_type": "杯垫"},
               "summary": "旧版初步方案", "assumptions": [], "evidence_source_ids": [], "used_skill_ids": []}}})}],
         [],
     )
@@ -90,6 +90,40 @@ def test_persisted_legacy_runtime_output_projects_to_a_natural_reply():
     assert reply["message"] == "旧版初步方案"
     assert reply["artifact_proposal"]["kind"] == "brief"
     assert reply["output_origin"] == "legacy_projection"
+    assert detail.messages[0].runtime_run_id == "run-legacy-1"
+
+
+def test_runtime_failure_projection_is_allow_listed_and_does_not_return_provider_detail():
+    detail = project_agent_session_detail(
+        {"id": "s1", "status": "created", "current_stage": "created"},
+        [{"id": "m1", "sequence_no": 1, "role": "assistant", "message_type": "runtime_result",
+          "content_text": "runtime_result", "created_at": datetime(2026, 8, 2),
+          "content_json": {"runtime_failure": {"code": "RUNTIME_MODEL_TIMEOUT", "retryable": True,
+                                                   "provider_body": "must not leave persistence"}}}],
+        [],
+    )
+
+    assert detail.messages[0].runtime_failure == {"code": "RUNTIME_MODEL_TIMEOUT", "retryable": True}
+
+
+def test_agent_generation_history_route_is_owner_scoped_and_read_only(agent_client, monkeypatch):
+    application, _service = agent_client
+    import backend.routes.agent_dialogue as route_module
+
+    class HistoryService:
+        def generation_history_detail(self, user_id, generation_log_id):
+            assert user_id == "U1" and generation_log_id == 73
+            return {"kind": "agent_artifact_image", "read_only": True, "generation_log": {"id": 73}}
+
+    monkeypatch.setattr(route_module, "get_agent_action_service", lambda: HistoryService())
+    from backend.routes.agent_dialogue import get_agent_generation_history
+
+    denied = asyncio.run(get_agent_generation_history(73, build_request("GET", "/api/v2/agent-design/history/generation-logs/73")))
+    assert denied.status_code == 401
+    success = asyncio.run(get_agent_generation_history(73, build_request("GET", "/api/v2/agent-design/history/generation-logs/73", token_value=token())))
+    body = response_json(success)
+    assert success.status_code == 200
+    assert body["status"] == "success" and body["data"]["read_only"] is True
 
 
 def test_routes_require_jwt_and_return_stable_success_envelope(agent_client):
@@ -110,6 +144,13 @@ def test_routes_require_jwt_and_return_stable_success_envelope(agent_client):
         "brief_summary", "product_design", "visual_direction", "final_result", "messages", "steps", "error",
         "created_at", "updated_at",
     }
+
+
+def test_persistence_error_uses_its_safe_default_message():
+    error = AgentPersistenceUnavailable()
+
+    assert error.code == "AGENT_PERSISTENCE_UNAVAILABLE"
+    assert error.message == "Agent session data service is temporarily unavailable."
 
 
 def test_routes_hide_foreign_session_and_preserve_409_error_contract(agent_client):

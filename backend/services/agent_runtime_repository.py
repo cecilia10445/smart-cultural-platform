@@ -184,8 +184,13 @@ class AgentRuntimeRepository(AgentDialogueRepository):
         return {
             "id": run["id"], "status": run.get("status"), "final_output_type": run.get("final_output_type"),
             "output": final if isinstance(final, dict) else None,
+            "error": ({"code": run.get("error_code"), "retryable": run.get("error_code") in {
+                "RUNTIME_OUTPUT_REPAIR_INVALID", "RUNTIME_IMAGE_ACTION_NOT_RETURNED", "RUNTIME_MODEL_TIMEOUT", "RUNTIME_PROVIDER_UNAVAILABLE",
+                "RUNTIME_PROVIDER_RATE_LIMITED",
+            }} if run.get("status") == "failed" and isinstance(run.get("error_code"), str) else None),
             "retryable": run.get("status") == "failed" and run.get("error_code") in {
-                "RUNTIME_OUTPUT_REPAIR_INVALID", "RUNTIME_MODEL_TIMEOUT", "RUNTIME_PROVIDER_UNAVAILABLE",
+                "RUNTIME_OUTPUT_REPAIR_INVALID", "RUNTIME_IMAGE_ACTION_NOT_RETURNED", "RUNTIME_MODEL_TIMEOUT", "RUNTIME_PROVIDER_UNAVAILABLE",
+                "RUNTIME_PROVIDER_RATE_LIMITED",
             },
             "safe_tool_events": tool_names, "context_metadata": {key: value for key, value in context_metadata.items()
                                                                       if key not in {"rag_status", "rag_summary"}},

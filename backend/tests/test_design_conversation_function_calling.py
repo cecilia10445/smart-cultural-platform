@@ -107,6 +107,17 @@ def test_v2_provider_rejects_legacy_envelopes_and_invalid_artifacts():
         }))
 
 
+def test_v2_provider_normalizes_closed_action_payload_envelope():
+    provider = ProviderConversationReplyV2.model_validate(reply(
+        "我已整理好一版试稿方向，确认后会进入图片生成。", "business_action_request",
+        business_action={"action": "generate_image_from_conversation", "payload": {"presentation_mode": "three_view"}},
+    ))
+    result = ConversationReply.model_validate(adapt_provider_reply_v2(provider))
+    assert result.business_action.action.value == "generate_image_from_conversation"
+    assert result.business_action.snapshot == {"presentation_mode": "three_view"}
+    assert result.business_action.reason_summary
+
+
 def test_valid_v2_brief_and_revision_pass_full_contract_without_message_copy():
     brief = ProviderConversationReplyV2.model_validate(reply("我整理了一版可继续修改的 Brief。", "brief_proposal", artifact=brief_artifact()))
     result = ConversationReply.model_validate(adapt_provider_reply_v2(brief))
@@ -158,6 +169,59 @@ def test_critique_and_research_are_natural_message_only_replies():
         assert result.status == AgentRunStatus.COMPLETED
         assert result.final_output["intent"] == intent
         assert result.final_output["artifact_proposal"] is None
+
+
+def test_one_output_schema_retry_can_finish_after_a_read_only_tool_without_replaying_it():
+    calls = []
+
+    async def model(_messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("search_cultural_knowledge", {"query": "竹编收纳篮", "top_k": 1})])
+        if len(calls) == 2:
+            # Simulate a provider that omits a required V2 field on its first
+            # final-result tool call. The Runtime may ask for output repair,
+            # but it must not rerun the read-only search.
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"contract_version": "conversation_reply_v2"})])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, reply(
+            "我会按轻量、通风和可陈列的方向给出一版竹编收纳篮方案。", "exploration",
+        ))])
+
+    result = asyncio.run(DesignConversationService(engine(model), state_reader).run_turn(
+        "owner", "session-1", "设计一个竹编收纳篮", {"current_user_input": "设计一个竹编收纳篮"},
+    ))
+
+    assert result.status == AgentRunStatus.COMPLETED
+    assert result.final_output["message"].startswith("我会按轻量")
+    assert len(calls) == 3
+    assert result.usage.executed_calls_by_tool == {"search_cultural_knowledge": 1}
+
+
+def test_invalid_final_reply_after_a_successful_read_only_tool_uses_safe_continuation():
+    calls = []
+
+    async def model(_messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("search_cultural_knowledge", {"query": "竹编收纳篮", "top_k": 1})])
+        if len(calls) == 2:
+            # Provider schema accepts this, but the domain adapter correctly
+            # rejects an attachment paired with a non-artifact intent.
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, reply(
+                "我先给出方向。", "general_answer", artifact=brief_artifact(),
+            ))])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, reply(
+            "The previous output was invalid. Here is the corrected compact JSON envelope.", "general_answer",
+        ))])
+
+    result = asyncio.run(DesignConversationService(engine(model), state_reader).run_turn(
+        "owner", "session-1", "设计一个竹编收纳篮", {"current_user_input": "设计一个竹编收纳篮"},
+    ))
+
+    assert result.status == AgentRunStatus.COMPLETED
+    assert result.final_output["output_origin"] == "system_fallback"
+    assert result.final_output["business_action"] is None
+    assert result.usage.executed_calls_by_tool == {"search_cultural_knowledge": 1}
 
 
 def test_one_bounded_repair_can_correct_a_usable_v2_reply_without_exceeding_budget():

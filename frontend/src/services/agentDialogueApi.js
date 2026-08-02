@@ -87,12 +87,26 @@ export const listArtifacts = (sessionId, taskId, options = {}) => {
   if (options.status) query.set('status', options.status)
   if (options.includeLegacy) query.set('include_legacy', 'true')
   const suffix = query.size ? `?${query.toString()}` : ''
-  return rawRequest('get', `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/artifacts${suffix}`).then((payload) => asArray(payload.data))
+  const base = taskId
+    ? `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/artifacts`
+    : `/api/v2/agent-design/sessions/${segment(sessionId)}/artifacts`
+  return rawRequest('get', `${base}${suffix}`).then((payload) => asArray(payload.data))
 }
-export const listActions = (sessionId, taskId) => rawRequest('get', `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/actions`).then((payload) => asArray(payload.data))
+export const listActions = (sessionId, taskId) => {
+  const base = taskId
+    ? `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/actions`
+    : `/api/v2/agent-design/sessions/${segment(sessionId)}/actions`
+  return rawRequest('get', base).then((payload) => asArray(payload.data))
+}
 export const getAvailableActions = (sessionId) => rawRequest('get', `/api/v2/agent-design/sessions/${segment(sessionId)}/available-actions`).then((payload) => asArray(payload.data))
+export const getAgentGenerationHistory = (generationLogId) => rawRequest('get', `/api/v2/agent-design/history/generation-logs/${segment(generationLogId)}`).then((payload) => payload.data)
 export const getRuntimeActionProposal = (sessionId, runId, actionType) => rawRequest('get', `/api/v2/agent-design/sessions/${segment(sessionId)}/assistant-turns/${segment(runId)}/action-proposal?action_type=${segment(actionType)}`).then((payload) => payload.data)
-export const requestAction = (sessionId, taskId, data) => rawRequest('post', `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/actions`, data)
+export const requestAction = (sessionId, taskId, data) => {
+  const base = taskId
+    ? `/api/v2/agent-design/sessions/${segment(sessionId)}/tasks/${segment(taskId)}/actions`
+    : `/api/v2/agent-design/sessions/${segment(sessionId)}/actions`
+  return rawRequest('post', base, data)
+}
 export const approveAction = (actionId, data) => rawRequest('post', `/api/v2/agent-design/actions/${segment(actionId)}/approve`, data)
 export const rejectAction = (actionId, data) => rawRequest('post', `/api/v2/agent-design/actions/${segment(actionId)}/reject`, data)
 export const executeAction = (actionId, data) => rawRequest('post', `/api/v2/agent-design/actions/${segment(actionId)}/execute`, data)

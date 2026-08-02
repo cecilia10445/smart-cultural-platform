@@ -32,5 +32,17 @@ class AgentRuntimeTurnService:
         visible = final.get("result", final)
         kind = visible.get("kind", final.get("intent", "runtime_result")) if isinstance(visible, dict) else "runtime_result"
         text = final.get("message") or (visible.get("answer") or visible.get("question") or visible.get("summary") or visible.get("reason_summary") or kind)
-        persisted = self.repository.complete_run(run, result, content, str(text), {"runtime_run_id": run["id"], "output": final})
+        assistant_json = {"runtime_run_id": run["id"], "output": final}
+        if result.error is not None:
+            assistant_json["runtime_failure"] = {
+                "code": result.error.code,
+                "retryable": result.error.code in {
+                    "RUNTIME_OUTPUT_REPAIR_INVALID",
+                    "RUNTIME_IMAGE_ACTION_NOT_RETURNED",
+                    "RUNTIME_MODEL_TIMEOUT",
+                    "RUNTIME_PROVIDER_UNAVAILABLE",
+                    "RUNTIME_PROVIDER_RATE_LIMITED",
+                },
+            }
+        persisted = self.repository.complete_run(run, result, content, str(text), assistant_json)
         return persisted, False

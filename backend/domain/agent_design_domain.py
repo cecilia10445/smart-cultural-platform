@@ -17,6 +17,25 @@ class ConversationStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class DesignScopeType(str, Enum):
+    """Where a formal Action or Artifact belongs.
+
+    A Design Task is an optional focus lens inside a Conversation; it is not a
+    prerequisite for creating a reviewable conversation-scoped result.
+    """
+
+    CONVERSATION = "conversation"
+    TASK = "task"
+
+
+def design_scope(scope_type: DesignScopeType, session_id: str, task_id: str | None = None) -> str:
+    if scope_type is DesignScopeType.TASK:
+        if not task_id:
+            raise ValueError("task scope requires task_id")
+        return f"task:{task_id}"
+    return f"conversation:{session_id}"
+
+
 class DesignTaskStatus(str, Enum):
     EXPLORING = "exploring"
     ACTIVE = "active"
@@ -102,6 +121,12 @@ class ArtifactNotFound(AgentDesignDomainError):
     code = "AGENT_ARTIFACT_NOT_FOUND"; status_code = 404; message = "Design artifact was not found."
 
 
+class AgentGenerationHistoryNotFound(AgentDesignDomainError):
+    """The owner cannot read an Agent-specific projection for this log."""
+
+    code = "AGENT_GENERATION_HISTORY_NOT_FOUND"; status_code = 404; message = "Agent generation history was not found."
+
+
 class ArtifactVersionConflict(AgentDesignDomainError):
     code = "ARTIFACT_VERSION_CONFLICT"; status_code = 409; message = "Artifact version already exists for this design task."
 
@@ -171,7 +196,9 @@ class DesignTaskRecord(BaseModel):
 
 class ArtifactRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str; user_id: str; session_id: str; task_id: str; artifact_type: ArtifactType; status: ArtifactStatus
+    id: str; user_id: str; session_id: str; task_id: str | None = None
+    scope_type: DesignScopeType = DesignScopeType.TASK; scope_key: str = ""
+    artifact_type: ArtifactType; status: ArtifactStatus
     version_number: int = Field(ge=1); parent_artifact_id: str | None = None; source_runtime_run_id: str | None = None
     source_action_id: str | None = None; content_json: dict[str, Any]; content_hash: str = Field(min_length=64, max_length=64)
     generation_log_id: int | None = Field(default=None, ge=1); origin: ArtifactOrigin; created_at: datetime
@@ -180,7 +207,9 @@ class ArtifactRecord(BaseModel):
 
 class ActionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str; user_id: str; session_id: str; task_id: str; action_type: ActionType; status: ActionStatus
+    id: str; user_id: str; session_id: str; task_id: str | None = None
+    scope_type: DesignScopeType = DesignScopeType.TASK; scope_key: str = ""
+    action_type: ActionType; status: ActionStatus
     idempotency_key: str = Field(min_length=1, max_length=128); request_hash: str = Field(min_length=64, max_length=64)
     expected_task_version: int | None = Field(default=None, ge=1); source_runtime_run_id: str | None = None
     source_artifact_ids_json: list[str] = Field(default_factory=list); proposal_snapshot_json: dict[str, Any] | None = None

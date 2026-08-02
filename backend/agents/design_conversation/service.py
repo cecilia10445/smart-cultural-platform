@@ -28,6 +28,10 @@ class DesignConversationService:
                       "design_runtime_state": {"retrieved_source_ids": set(), "loaded_skill_ids": set()},
                       "conversation_context": context_payload or {}},
         )
+        # A conversation is intentionally not routed through a hidden product
+        # state machine.  The model may answer, research, propose a formal
+        # action, or use an eligible read-only tool on every turn.  Side
+        # effects are still gated later by the Action Policy and approval.
         definition = self._definition_for_turn(user_input)
         result = await self.runtime_engine.run(
             definition, context,
@@ -38,7 +42,10 @@ class DesignConversationService:
             final_output = {**result.final_output, "rag_status": metadata["rag_status"]}
             result = result.model_copy(update={"final_output": final_output})
         invalid_structured_output = (result.status is AgentRunStatus.FAILED and result.error
-                                     and result.error.code in {"RUNTIME_MODEL_RESPONSE_INVALID", "FINAL_OUTPUT_INVALID"}
+                                     and result.error.code in {
+                                         "RUNTIME_MODEL_RESPONSE_INVALID", "FINAL_OUTPUT_INVALID",
+                                         "RUNTIME_OUTPUT_REPAIR_INVALID",
+                                     }
                                      and bool(result.tool_results))
         if ((result.status is AgentRunStatus.FAILED and result.error and result.error.code == "MODEL_REQUEST_LIMIT_EXCEEDED"
                 and any(record.error_code == "TOOL_CALL_LIMIT_EXCEEDED" for record in result.traces))
@@ -51,22 +58,18 @@ class DesignConversationService:
 
     @staticmethod
     def _definition_for_turn(user_input: str):
-        """Keep formal validation unavailable until a user asks for an action.
+        """Return one capability contract for the whole conversation.
 
-        This is a safety boundary, not intent routing: the model still decides
-        whether ordinary read-only tools are useful and what kind of reply to
-        give.  A tentative/unsaved Brief is deliberately not a formal action.
+        Keyword routing made a user's wording decide whether the Runtime could
+        validate a proposal.  That coupled free conversation to a legacy
+        linear workflow and caused identical intent to behave differently.
+        The Runtime now receives one stable tool contract; the Action Policy
+        remains the sole authority for side effects.
         """
-        compact = "".join(str(user_input).split())
-        explicit_non_action = any(token in compact for token in (
-            "不要保存", "先不要保存", "暂不保存", "不保存", "不要应用", "先不要应用", "不应用",
-            "不要生成图片", "不生成图片", "不要出图", "不出图",
-        ))
-        formal_action = not explicit_non_action and any(token in compact for token in (
-            "保存", "应用修改", "应用方案", "确认方案", "确认保存", "生成图片", "出图",
-        ))
-        if formal_action:
-            return DESIGN_CONVERSATION_DEFINITION
+        # Constraint validation belongs to the Action Policy after the Runtime
+        # has proposed a command.  Keeping that write-oriented tool out of the
+        # free conversation contract avoids a hidden keyword/state gate while
+        # leaving research and other read-only tools available every turn.
         allowed = DESIGN_CONVERSATION_DEFINITION.allowed_tools - {"validate_design_constraints"}
         return replace(
             DESIGN_CONVERSATION_DEFINITION,
